@@ -32,13 +32,14 @@ static wpe_particle_vertex_data particle_vertex_data[4] = {
     {{1.0f, 1.0f}},
 };
 
-static ow_vertex_attribute particle_vertex_attributes[6] = {
+static ow_vertex_attribute particle_vertex_attributes[7] = {
     {.slot = 0, .location = 0, .type = OW_ATTRIBUTE_FLOAT2, .offset = offsetof(wpe_particle_vertex_data, texcoord)},
     {.slot = 1, .location = 1, .type = OW_ATTRIBUTE_FLOAT3, .offset = offsetof(wpe_particle_instance_data, position)},
     {.slot = 1, .location = 2, .type = OW_ATTRIBUTE_FLOAT3, .offset = offsetof(wpe_particle_instance_data, rotation)},
     {.slot = 1, .location = 3, .type = OW_ATTRIBUTE_FLOAT, .offset = offsetof(wpe_particle_instance_data, size)},
     {.slot = 1, .location = 4, .type = OW_ATTRIBUTE_FLOAT4, .offset = offsetof(wpe_particle_instance_data, color)},
     {.slot = 1, .location = 5, .type = OW_ATTRIBUTE_INT, .offset = offsetof(wpe_particle_instance_data, frame)},
+    {.slot = 1, .location = 6, .type = OW_ATTRIBUTE_FLOAT, .offset = offsetof(wpe_particle_instance_data, frame_blend)},
 };
 
 static ow_vertex_buffer_id particle_vertex_buffer;
@@ -263,16 +264,17 @@ static void generate_turbulent_velocity(
     out_velocity[2] = direction[2] * speed;
 }
 
-static int particle_spritesheet_frame(wpe_particle_object* particle, wpe_particle_instance* instance) {
+static void update_particle_spritesheet_frame(wpe_particle_object* particle, wpe_particle_instance* instance) {
     if(particle->spritesheet_frames <= 0) {
-        return 0;
+        instance->frame = 0;
+        return;
     }
 
     if(particle->random_frame) {
         if(instance->frame < 0) {
             instance->frame = rand() % particle->spritesheet_frames;
         }
-        return instance->frame;
+        return;
     }
 
     float lifetime_fraction = 0.0f;
@@ -288,7 +290,21 @@ static int particle_spritesheet_frame(wpe_particle_object* particle, wpe_particl
             frame += particle->spritesheet_frames;
         }
     }
-    return frame;
+    instance->frame = frame;
+}
+
+static float particle_spritesheet_frame_blend(wpe_particle_object* particle, wpe_particle_instance* instance) {
+    if(!particle->frame_blending || particle->spritesheet_frames <= 1 || particle->random_frame) {
+        return 0.0f;
+    }
+
+    float lifetime_fraction = 0.0f;
+    if(instance->lifetime > 0.0f) {
+        lifetime_fraction = instance->age / instance->lifetime;
+    }
+
+    float frame_position = lifetime_fraction * particle->sequence_multiplier * (float)particle->spritesheet_frames;
+    return frame_position - floorf(frame_position);
 }
 
 static void spawn_particle_instance(
@@ -462,7 +478,7 @@ static void update_particle_instance(wpe_particle_object* particle, wpe_particle
             oscillate_scalar_factor(&particle->operator.oscillate_size, instance->age, instance->oscillate_random);
     }
 
-    instance->frame = particle_spritesheet_frame(particle, instance);
+    update_particle_spritesheet_frame(particle, instance);
 }
 
 static void update_particle(wpe_particle_object* particle, float delta, const wpe_renderer_state* state) {
@@ -509,6 +525,7 @@ static void update_particle_instance_data(wpe_particle_object* particle) {
                     particle->instances[i].alpha,
                 },
             .frame = particle->instances[i].frame,
+            .frame_blend = particle_spritesheet_frame_blend(particle, &particle->instances[i]),
         };
     }
 }
@@ -549,7 +566,7 @@ static ow_pipeline_id create_particle_pipeline(wpe_shader* shader, const char* b
         .vertex_bindings = vertex_bindings,
         .vertex_bindings_count = 2,
         .vertex_attributes = particle_vertex_attributes,
-        .vertex_attributes_count = 6,
+        .vertex_attributes_count = 7,
         .vertex_shader = shader->vertex_shader,
         .fragment_shader = shader->fragment_shader,
         .color_target_format = OW_TEXTURE_RGBA8_UNORM,

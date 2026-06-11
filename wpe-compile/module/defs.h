@@ -325,6 +325,7 @@ typedef struct {
     float size;
     float color[4];
     int frame;
+    float frame_blend;
 } wpe_particle_instance_data;
 
 typedef struct {
@@ -453,6 +454,7 @@ typedef struct {
     float start_time;
     float sequence_multiplier;
     bool random_frame;
+    bool frame_blending;
     int spritesheet_cols;
     int spritesheet_rows;
     int spritesheet_frames;

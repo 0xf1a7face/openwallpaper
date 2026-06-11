@@ -6,10 +6,12 @@ layout(location = 2) in vec3 a_rotation;
 layout(location = 3) in float a_size;
 layout(location = 4) in vec4 a_color;
 layout(location = 5) in int a_frame;
+layout(location = 6) in float a_frame_blend;
 
 layout(location = 0) out vec2 v_uv;
 layout(location = 1) out vec4 v_color;
 layout(location = 2) out flat int v_frame;
+layout(location = 3) out flat float v_frame_blend;
 
 layout(std140, set = 1, binding = 0) uniform uniforms_t {
     mat4 mvp;
@@ -57,5 +59,5 @@ void main() {
     v_uv = a_uv;
     v_color = a_color;
     v_frame = a_frame;
+    v_frame_blend = a_frame_blend;
 }
-

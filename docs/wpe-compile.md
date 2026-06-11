@@ -54,7 +54,6 @@ You can check out this list to see what is not yet implemented or can be improve
 - [x] Texture
   - [x] Image
   - [x] Spritesheet
-    - [ ] Frame blending
   - [ ] Video texture
 
 - [x] Camera

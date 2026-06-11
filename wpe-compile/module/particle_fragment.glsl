@@ -3,6 +3,7 @@
 layout(location = 0) in vec2 v_uv;
 layout(location = 1) in vec4 v_color;
 layout(location = 2) in flat int v_frame;
+layout(location = 3) in flat float v_frame_blend;
 
 layout(location = 0) out vec4 f_color;
 
@@ -23,27 +24,36 @@ vec4 convert_tex0_format(vec4 color) {
 #endif
 }
 
-void main() {
-    vec2 uv = v_uv;
-
-    if(spritesheet_size.x > 0) {
-        int cols = spritesheet_size.x;
-        int rows = spritesheet_size.y;
-        int frame_count = cols * rows;
-
-        int frame_x = v_frame % cols;
-        int frame_y = v_frame / cols;
-
-        float frame_width = 1.0 / float(cols);
-        float frame_height = 1.0 / float(rows);
-
-        uv = vec2(
-            (float(frame_x) + v_uv.x) * frame_width,
-            (float(frame_y) + v_uv.y) * frame_height
-        );
-    }
-
-    vec4 tex_color = convert_tex0_format(texture(u_texture, uv));
-    f_color = tex_color * v_color;
+vec2 sprite_frame_uv(int frame, int cols, int rows) {
+    int frame_x = frame % cols;
+    int frame_y = frame / cols;
+    float frame_width = 1.0 / float(cols);
+    float frame_height = 1.0 / float(rows);
+    return vec2(
+        (float(frame_x) + v_uv.x) * frame_width,
+        (float(frame_y) + v_uv.y) * frame_height
+    );
 }
 
+void main() {
+#if SPRITESHEET
+    int cols = spritesheet_size.x;
+    int rows = spritesheet_size.y;
+    int frame_count = cols * rows;
+    int current_frame = clamp(v_frame, 0, frame_count - 1);
+    vec2 uv = sprite_frame_uv(current_frame, cols, rows);
+#if FRAME_BLENDING
+    int next_frame = min(frame_count - 1, current_frame + 1);
+    vec4 tex_color = mix(
+        convert_tex0_format(texture(u_texture, uv)),
+        convert_tex0_format(texture(u_texture, sprite_frame_uv(next_frame, cols, rows))),
+        v_frame_blend
+    );
+#else
+    vec4 tex_color = convert_tex0_format(texture(u_texture, uv));
+#endif
+#else
+    vec4 tex_color = convert_tex0_format(texture(u_texture, v_uv));
+#endif
+    f_color = tex_color * v_color;
+}

@@ -405,6 +405,7 @@ func (writer *sceneBinWriter) particleObject(object *ParticleObject) {
 	writer.f32(particle.StartTime)
 	writer.f32(particle.SequenceMultiplier)
 	writer.bool(particle.RandomFrame)
+	writer.bool(particleFrameBlendingEnabled(object))
 	writer.i32(object.SpritesheetCols)
 	writer.i32(object.SpritesheetRows)
 	writer.i32(object.SpritesheetFrames)

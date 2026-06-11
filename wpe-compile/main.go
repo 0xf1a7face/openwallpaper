@@ -655,13 +655,27 @@ func addParticleShaderTasks() {
 		particleObject.SpritesheetFrames = textureTask.SpritesheetFrames
 		particleObject.TextureRatio = particleTextureRatio(textureTask)
 
+		defines := map[string]int{"TEX0_FORMAT": particleTextureFormatDefine(textureTask.Format)}
+		if textureTask.SpritesheetFrames > 0 {
+			defines["SPRITESHEET"] = 1
+		}
+		if particleFrameBlendingEnabled(particleObject) {
+			defines["FRAME_BLENDING"] = 1
+		}
+
 		particleObject.ParticleData.Material.CompiledShader = addCompileShaderTask(&CompileShaderTask{
 			Name:          "particle",
 			BuiltIn:       "particle",
-			Defines:       map[string]int{"TEX0_FORMAT": particleTextureFormatDefine(textureTask.Format)},
+			Defines:       defines,
 			BoundTextures: []bool{true},
 		})
 	}
+}
+
+func particleFrameBlendingEnabled(object *ParticleObject) bool {
+	return object.SpritesheetFrames > 1 &&
+		!object.ParticleData.RandomFrame &&
+		object.ParticleData.Flags&ParticleFlagSpriteNoFrameBlending == 0
 }
 
 func particleTextureRatio(texture *ImportTextureTask) float32 {

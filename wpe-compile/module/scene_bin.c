@@ -393,6 +393,7 @@ static void read_particle_object(wpe_scene_bin_reader* reader, wpe_particle_obje
     particle->start_time = read_f32(reader);
     particle->sequence_multiplier = read_f32(reader);
     particle->random_frame = read_bool(reader);
+    particle->frame_blending = read_bool(reader);
     particle->spritesheet_cols = read_i32(reader);
     particle->spritesheet_rows = read_i32(reader);
     particle->spritesheet_frames = read_i32(reader);
