@@ -64,6 +64,10 @@ static void update_camera_state(float delta) {
 }
 
 __attribute__((export_name("init"))) void init() {
+    if(!wpe_load_scene()) {
+        return;
+    }
+
     const char* scale_mode = ow_get_option("scale-mode");
     if(scale_mode != NULL) {
         if(strcmp(scale_mode, "stretch") == 0) {

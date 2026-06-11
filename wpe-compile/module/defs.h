@@ -584,17 +584,14 @@ typedef struct {
     int audio_spectrum_size;
 } wpe_renderer_state;
 
-#if defined(SCENE) && defined(WPE_COMPILE_SCENE_DEFINE)
-#include "scene.h"
-#else
 extern wpe_scene scene;
-#endif
 
 wpe_mat4 wpe_mat4_identity();
 wpe_mat4 wpe_mat4_inverse_affine(wpe_mat4 m);
 wpe_transform_matrices wpe_default_transform_matrices();
 wpe_transform_matrices wpe_compute_transform_matrices(wpe_transform_parameters params);
 
+bool wpe_load_scene();
 bool wpe_starts_with(const char* value, const char* prefix);
 bool wpe_ends_with(const char* value, const char* suffix);
 int wpe_texture_slot_from_uniform_name(const char* name);

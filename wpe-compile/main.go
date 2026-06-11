@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	_ "embed"
 	"fmt"
 	"maps"
@@ -13,7 +12,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"text/template"
 
 	"github.com/alexflint/go-arg"
 )
@@ -56,7 +54,6 @@ type CompileShaderTask struct {
 var (
 	env struct {
 		Assets string
-		WasmCC string
 	}
 	args struct {
 		Input       string `arg:"positional,required"`
@@ -77,38 +74,8 @@ var (
 	}
 )
 
-//go:embed module/main.c
-var mainCode []byte
-
-//go:embed module/renderer.c
-var rendererCode []byte
-
-//go:embed module/common.c
-var commonCode []byte
-
-//go:embed module/uniform.c
-var uniformCode []byte
-
-//go:embed module/image.c
-var imageCode []byte
-
-//go:embed module/puppet.c
-var puppetCode []byte
-
-//go:embed module/particle.c
-var particleCode []byte
-
-//go:embed module/transform.c
-var transformCode []byte
-
-//go:embed module/scene_data.c
-var sceneDataCode []byte
-
-//go:embed module/defs.h
-var defsCode []byte
-
-//go:embed module/scene.tmpl
-var sceneTemplateCode []byte
+//go:embed module/scene.wasm
+var sceneWASM []byte
 
 //go:embed module/particle_vertex.glsl
 var particleVertexGLSL []byte
@@ -119,12 +86,8 @@ var particleFragmentGLSL []byte
 func main() {
 	arg.MustParse(&args)
 	env.Assets = os.Getenv("WPE_COMPILE_ASSETS")
-	env.WasmCC = os.Getenv("WPE_COMPILE_WASM_CC")
 	if env.Assets == "" {
 		panic("WPE_COMPILE_ASSETS is not set")
-	}
-	if env.WasmCC == "" {
-		panic("WPE_COMPILE_WASM_CC is not set")
 	}
 
 	pkgFile, err := os.ReadFile(args.Input)
@@ -165,85 +128,14 @@ func main() {
 	}
 
 	preprocessScene()
-	fmt.Printf("\r\033[K[%d/%d] compiling scene module\n", len(state.Tasks), len(state.Tasks))
+	fmt.Printf("\r\033[K[%d/%d] encoding scene data\n", len(state.Tasks), len(state.Tasks))
 
-	sceneTemplate, err := template.New("scene.tmpl").Parse(string(sceneTemplateCode))
+	sceneBin, err := makeSceneBin(state.Scene)
 	if err != nil {
-		panic("parsing scene template failed: " + err.Error())
+		panic("encoding scene data failed: " + err.Error())
 	}
-	sceneCodeBuffer := bytes.Buffer{}
-	err = sceneTemplate.ExecuteTemplate(&sceneCodeBuffer, "scene", state.Scene)
-	if err != nil {
-		panic("executing scene template failed: " + err.Error())
-	}
-	sceneCode := sceneCodeBuffer.Bytes()
-
-	if args.KeepSources {
-		state.OutputMap["scene.h"] = sceneCode
-	}
-
-	tempDirBytes, err := exec.Command("mktemp", "-d").Output()
-	if err != nil {
-		panic("mktemp failed: " + err.Error())
-	}
-	tempDir := strings.TrimSuffix(string(tempDirBytes), "\n")
-
-	files := map[string][]byte{
-		"main.c":       mainCode,
-		"renderer.c":   rendererCode,
-		"common.c":     commonCode,
-		"uniform.c":    uniformCode,
-		"image.c":      imageCode,
-		"puppet.c":     puppetCode,
-		"particle.c":   particleCode,
-		"transform.c":  transformCode,
-		"scene_data.c": sceneDataCode,
-		"defs.h":       defsCode,
-		"scene.h":      sceneCode,
-	}
-
-	for name, content := range files {
-		err = os.WriteFile(tempDir+"/"+name, content, 0644)
-		if err != nil {
-			panic(fmt.Errorf("write %s failed: %s", name, err))
-		}
-	}
-
-	compileArgs := []string{
-		tempDir + "/main.c",
-		tempDir + "/renderer.c",
-		tempDir + "/common.c",
-		tempDir + "/uniform.c",
-		tempDir + "/image.c",
-		tempDir + "/puppet.c",
-		tempDir + "/particle.c",
-		tempDir + "/transform.c",
-		tempDir + "/scene_data.c",
-		"-o",
-		tempDir + "/scene.wasm",
-		"-DSCENE",
-		"-I../include",
-		"-O3",
-		"-Wl,--allow-undefined",
-		"-Wl,--max-memory=268435456",
-		"-Wl,-z,stack-size=1048576",
-		"-Wl,--export=malloc",
-		"-Wl,--export=free",
-		"-Wl,--export=__heap_base",
-		"-Wl,--export=__data_end",
-	}
-
-	logBytes, err := exec.Command(env.WasmCC, compileArgs...).CombinedOutput()
-	if err != nil {
-		panic("compiling scene module failed: " + string(logBytes))
-	}
-
-	wasmBytes, err := os.ReadFile(tempDir + "/scene.wasm")
-	if err != nil {
-		panic("reading scene module failed: " + err.Error())
-	}
-
-	state.OutputMap["scene.wasm"] = wasmBytes
+	state.OutputMap["scene.bin"] = sceneBin
+	state.OutputMap["scene.wasm"] = sceneWASM
 
 	zip, err := zipBytes(state.OutputMap)
 	if err != nil {
@@ -253,11 +145,6 @@ func main() {
 	err = os.WriteFile(args.Output, zip, 0644)
 	if err != nil {
 		panic("write output failed: " + err.Error())
-	}
-
-	err = os.RemoveAll(tempDir)
-	if err != nil {
-		println("warning: failed to remove temp dir: " + err.Error())
 	}
 }
 
