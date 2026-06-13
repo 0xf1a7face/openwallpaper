@@ -13,15 +13,12 @@
 #include "ready.h"
 #include "state.h"
 #include "wasm_api.h"
-#include "zip.h"
 
 #ifndef WD_WAMRC_BINARY
 #define WD_WAMRC_BINARY "wamrc"
 #endif
 
 static NativeSymbol native_symbols[] = {
-    {"ow_get_file_size", ow_get_file_size, "(i)i"},
-    {"ow_read_file", ow_read_file, "(ii)"},
     {"ow_begin_copy_pass", ow_begin_copy_pass, "()"},
     {"ow_end_copy_pass", ow_end_copy_pass, "()"},
     {"ow_begin_render_pass", ow_begin_render_pass, "(i)"},
@@ -31,14 +28,12 @@ static NativeSymbol native_symbols[] = {
     {"ow_update_vertex_buffer", ow_update_buffer, "(iiii)"},
     {"ow_update_index_buffer", ow_update_buffer, "(iiii)"},
     {"ow_create_texture", ow_create_texture, "(i)i"},
-    {"ow_create_texture_from_image", ow_create_texture_from_image, "(ii)i"},
+    {"ow_create_texture_from_image", ow_create_texture_from_image, "(iii)i"},
     {"ow_update_texture", ow_update_texture, "(iii)"},
     {"ow_generate_mipmaps", ow_generate_mipmaps, "(i)"},
     {"ow_create_sampler", ow_create_sampler, "(i)i"},
-    {"ow_create_vertex_shader_from_bytecode", ow_create_vertex_shader_from_bytecode, "(ii)i"},
-    {"ow_create_vertex_shader_from_file", ow_create_vertex_shader_from_file, "(i)i"},
-    {"ow_create_fragment_shader_from_bytecode", ow_create_fragment_shader_from_bytecode, "(ii)i"},
-    {"ow_create_fragment_shader_from_file", ow_create_fragment_shader_from_file, "(i)i"},
+    {"ow_create_vertex_shader", ow_create_vertex_shader, "(ii)i"},
+    {"ow_create_fragment_shader", ow_create_fragment_shader, "(ii)i"},
     {"ow_create_pipeline", ow_create_pipeline, "(i)i"},
     {"ow_push_vertex_uniform_data", ow_push_vertex_uniform_data, "(iii)"},
     {"ow_push_fragment_uniform_data", ow_push_fragment_uniform_data, "(iii)"},
@@ -265,6 +260,30 @@ static bool ensure_framebuffer(wd_state* state, uint32_t width, uint32_t height)
     return true;
 }
 
+static bool load_module_file(wd_scene_state* scene, const char* module_path, size_t* module_size) {
+    void* loaded = SDL_LoadFile(module_path, module_size);
+    if(loaded == NULL) {
+        wd_set_error("failed to load scene module %s: %s", module_path, SDL_GetError());
+        return false;
+    }
+
+    scene->module_buffer = wd_malloc(*module_size == 0 ? 1 : *module_size);
+    memcpy(scene->module_buffer, loaded, *module_size);
+    SDL_free(loaded);
+    return true;
+}
+
+static sds scene_module_dir(const char* module_path) {
+    const char* last_slash = strrchr(module_path, '/');
+    if(last_slash == NULL) {
+        return sdsnew(".");
+    }
+    if(last_slash == module_path) {
+        return sdsnewlen(module_path, 1);
+    }
+    return sdsnewlen(module_path, (size_t)(last_slash - module_path));
+}
+
 bool init_wasm(wd_state* state) {
     wd_scene_state* scene = &state->scene;
     wd_args_state* args = &state->args;
@@ -283,28 +302,16 @@ bool init_wasm(wd_state* state) {
         return false;
     }
 
-    const char* path = wd_get_wallpaper_path(args);
-    if(!wd_init_zip(&state->zip, path)) {
-        return false;
-    }
-
     size_t module_size = 0;
-    if(!wd_zip_get_file_size(&state->zip, "scene.wasm", &module_size)) {
-        return false;
-    }
-
-    scene->module_buffer = wd_malloc(module_size == 0 ? 1 : module_size);
-    if(!wd_zip_read_file(&state->zip, "scene.wasm", scene->module_buffer)) {
-        free(scene->module_buffer);
-        scene->module_buffer = NULL;
+    if(!load_module_file(scene, wd_get_wallpaper_path(args), &module_size)) {
         return false;
     }
     if(module_size > UINT32_MAX) {
-        wd_set_error("scene.wasm is too large");
+        wd_set_error("scene module is too large");
         return false;
     }
     if(wasm_runtime_get_file_package_type(scene->module_buffer, (uint32_t)module_size) != Wasm_Module_Bytecode) {
-        wd_set_error("scene.wasm must be wasm bytecode");
+        wd_set_error("scene module must be wasm bytecode");
         return false;
     }
 
@@ -320,7 +327,16 @@ bool init_wasm(wd_state* state) {
         }
     }
 
+    sds module_dir = scene_module_dir(wd_get_wallpaper_path(args));
+    sds module_dir_root_map = sdscatprintf(sdsempty(), "/::%s", module_dir);
+    sds module_dir_relative_map = sdscatprintf(sdsempty(), ".::%s", module_dir);
+    const char* wasi_map_dirs[] = {module_dir_root_map, module_dir_relative_map};
+    wasm_runtime_set_wasi_args(scene->module, NULL, 0, wasi_map_dirs, 2, NULL, 0, NULL, 0);
+
     scene->instance = wasm_runtime_instantiate(scene->module, stack_size, 0, error_buf, sizeof(error_buf));
+    sdsfree(module_dir_relative_map);
+    sdsfree(module_dir_root_map);
+    sdsfree(module_dir);
     if(scene->instance == NULL) {
         wd_set_error("wasm_runtime_instantiate failed: %s", error_buf);
         return false;
@@ -491,7 +507,6 @@ static void free_scene_with_deps(wd_state* state) {
     uint32_t unused;
     wd_new_object(&state->object_manager, WD_OBJECT_EMPTY, NULL, &unused);
     wd_free_scene(&state->scene);
-    wd_free_zip(&state->zip);
 }
 
 bool wd_run_scene(wd_state* state) {

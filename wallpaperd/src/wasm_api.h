@@ -112,10 +112,10 @@ enum {
 
 typedef struct {
     uint32_t color_target;
-    uint32_t clear_color;
+    uint8_t clear_color;
     float clear_color_rgba[4];
     uint32_t depth_target;
-    uint32_t clear_depth;
+    uint8_t clear_depth;
     float clear_depth_value;
 } ow_render_pass_info;
 
@@ -124,7 +124,7 @@ typedef struct {
     uint32_t height;
     uint32_t mip_levels;
     ow_texture_format format;
-    uint32_t render_target;
+    uint8_t render_target;
 } ow_texture_info;
 
 typedef struct {
@@ -148,7 +148,7 @@ typedef struct {
 typedef struct {
     uint32_t slot;
     uint32_t stride;
-    uint32_t per_instance;
+    uint8_t per_instance;
 } ow_vertex_binding_info;
 
 typedef struct {
@@ -159,7 +159,7 @@ typedef struct {
 } ow_vertex_attribute;
 
 typedef struct {
-    bool enabled;
+    uint8_t enabled;
     ow_blend_factor src_color_factor;
     ow_blend_factor dst_color_factor;
     ow_blend_operator color_operator;
@@ -178,7 +178,7 @@ typedef struct {
     uint32_t fragment_shader;
     ow_blend_mode blend_mode;
     ow_depth_test_mode depth_test_mode;
-    uint32_t depth_write;
+    uint8_t depth_write;
     ow_topology topology;
     ow_cull_mode cull_mode;
 } ow_pipeline_info;
@@ -200,9 +200,6 @@ typedef struct {
 void init();
 void update(float delta);
 
-uint32_t ow_get_file_size(wasm_exec_env_t exec_env, uint32_t path_ptr);
-void ow_read_file(wasm_exec_env_t exec_env, uint32_t path_ptr, uint32_t data_ptr);
-
 void ow_begin_copy_pass(wasm_exec_env_t exec_env);
 void ow_end_copy_pass(wasm_exec_env_t exec_env);
 void ow_begin_render_pass(wasm_exec_env_t exec_env, uint32_t info_ptr);
@@ -212,14 +209,12 @@ uint32_t ow_create_vertex_buffer(wasm_exec_env_t exec_env, uint32_t size);
 uint32_t ow_create_index_buffer(wasm_exec_env_t exec_env, uint32_t size, uint32_t wide);
 void ow_update_buffer(wasm_exec_env_t exec_env, uint32_t buffer, uint32_t offset, uint32_t data_ptr, uint32_t size);
 uint32_t ow_create_texture(wasm_exec_env_t exec_env, uint32_t info_ptr);
-uint32_t ow_create_texture_from_image(wasm_exec_env_t exec_env, uint32_t path_ptr, uint32_t info_ptr);
+uint32_t ow_create_texture_from_image(wasm_exec_env_t exec_env, uint32_t image_ptr, uint32_t size, uint32_t info_ptr);
 void ow_update_texture(wasm_exec_env_t exec_env, uint32_t data_ptr, uint32_t pixels_per_row, uint32_t dest_ptr);
 void ow_generate_mipmaps(wasm_exec_env_t exec_env, uint32_t texture);
 uint32_t ow_create_sampler(wasm_exec_env_t exec_env, uint32_t info_ptr);
-uint32_t ow_create_vertex_shader_from_bytecode(wasm_exec_env_t exec_env, uint32_t bytecode_ptr, uint32_t size);
-uint32_t ow_create_vertex_shader_from_file(wasm_exec_env_t exec_env, uint32_t path_ptr);
-uint32_t ow_create_fragment_shader_from_bytecode(wasm_exec_env_t exec_env, uint32_t bytecode_ptr, uint32_t size);
-uint32_t ow_create_fragment_shader_from_file(wasm_exec_env_t exec_env, uint32_t path_ptr);
+uint32_t ow_create_vertex_shader(wasm_exec_env_t exec_env, uint32_t bytecode_ptr, uint32_t size);
+uint32_t ow_create_fragment_shader(wasm_exec_env_t exec_env, uint32_t bytecode_ptr, uint32_t size);
 uint32_t ow_create_pipeline(wasm_exec_env_t exec_env, uint32_t info_ptr);
 
 void ow_push_vertex_uniform_data(wasm_exec_env_t exec_env, uint32_t slot, uint32_t data_ptr, uint32_t size);

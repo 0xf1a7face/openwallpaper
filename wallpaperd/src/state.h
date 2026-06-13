@@ -9,7 +9,6 @@
 #include "output.h"
 #include "scene.h"
 #include "video.h"
-#include "zip.h"
 
 typedef struct wd_state {
     wd_args_state args;
@@ -17,7 +16,6 @@ typedef struct wd_state {
     wd_output_state output;
     wd_scene_state scene;
     wd_video_state video;
-    wd_zip_state zip;
     wd_battery_state battery;
     wd_audio_visualizer_state audio_visualizer;
 } wd_state;

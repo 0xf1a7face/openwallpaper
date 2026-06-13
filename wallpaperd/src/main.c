@@ -41,8 +41,10 @@ static bool is_scene(const char* path) {
         return false;
     }
 
-    const char* ext = strrchr(path, '.');
-    return ext != NULL && strcmp(ext, ".owf") == 0;
+    const char* ext = ".wasm";
+    size_t path_len = strlen(path);
+    size_t ext_len = strlen(ext);
+    return path_len >= ext_len && strcmp(path + path_len - ext_len, ext) == 0;
 }
 
 int main(int argc, char* argv[]) {
@@ -79,7 +81,8 @@ int main(int argc, char* argv[]) {
         goto handle_error;
     }
 
-    bool scene_wallpaper = is_scene(wd_get_wallpaper_path(&state.args));
+    const char* wallpaper_path = wd_get_wallpaper_path(&state.args);
+    bool scene_wallpaper = is_scene(wallpaper_path);
     bool opengl = !scene_wallpaper;
 
 #ifndef WD_VIDEO

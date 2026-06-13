@@ -39,52 +39,6 @@ static char* app_str_to_native(wasm_module_inst_t instance, uint32_t ptr) {
     return wasm_runtime_addr_app_to_native(instance, ptr);
 }
 
-uint32_t ow_get_file_size(wasm_exec_env_t exec_env, uint32_t path_ptr) {
-    wasm_module_inst_t instance = wasm_runtime_get_module_inst(exec_env);
-    wd_state* state = wasm_runtime_get_custom_data(instance);
-
-    const char* path = app_str_to_native(instance, path_ptr);
-    DEBUG_CHECK_RET0(path != NULL, "ow_load_file path address is out of bounds");
-    size_t size;
-    if(!wd_zip_get_file_size(&state->zip, path, &size)) {
-        wasm_runtime_set_exception(instance, "");
-        return 0;
-    }
-
-    if(size > UINT32_MAX) {
-        wd_set_error("decompressed size of %s exceeds wasm size limits", path);
-        wasm_runtime_set_exception(instance, "");
-        return 0;
-    }
-
-    return (uint32_t)size;
-}
-
-void ow_read_file(wasm_exec_env_t exec_env, uint32_t path_ptr, uint32_t data_ptr) {
-    wasm_module_inst_t instance = wasm_runtime_get_module_inst(exec_env);
-    wd_state* state = wasm_runtime_get_custom_data(instance);
-
-    const char* path = app_str_to_native(instance, path_ptr);
-    DEBUG_CHECK(path != NULL, "ow_read_file path address is out of bounds");
-    size_t size = 0;
-    if(!wd_zip_get_file_size(&state->zip, path, &size)) {
-        wasm_runtime_set_exception(instance, "");
-        return;
-    }
-
-    if(size > UINT32_MAX) {
-        wd_set_error("file size for %s exceeds wasm32 size limits", path);
-        wasm_runtime_set_exception(instance, "");
-        return;
-    }
-
-    uint8_t* data_ptr_real = app_slice_to_native(instance, data_ptr, size);
-    DEBUG_CHECK(data_ptr_real != NULL, "ow_read_file data address is out of bounds");
-    if(!wd_zip_read_file(&state->zip, path, data_ptr_real)) {
-        wasm_runtime_set_exception(instance, "");
-    }
-}
-
 void ow_begin_copy_pass(wasm_exec_env_t exec_env) {
     wasm_module_inst_t instance = wasm_runtime_get_module_inst(exec_env);
     wd_state* state = wasm_runtime_get_custom_data(instance);
@@ -189,8 +143,7 @@ void ow_end_render_pass(wasm_exec_env_t exec_env) {
     }
 }
 
-static uint32_t create_shader_from_bytecode(
-    wasm_exec_env_t exec_env, const uint8_t* bytecode, size_t size, bool fragment) {
+static uint32_t create_shader(wasm_exec_env_t exec_env, const uint8_t* bytecode, size_t size, bool fragment) {
     wasm_module_inst_t instance = wasm_runtime_get_module_inst(exec_env);
     wd_state* state = wasm_runtime_get_custom_data(instance);
     wd_scene_state* scene = &state->scene;
@@ -219,52 +172,18 @@ static uint32_t create_shader_from_bytecode(
     return result;
 }
 
-static uint32_t create_shader_from_file(wasm_exec_env_t exec_env, uint32_t path_ptr, bool fragment) {
-    wasm_module_inst_t instance = wasm_runtime_get_module_inst(exec_env);
-    wd_state* state = wasm_runtime_get_custom_data(instance);
-    const char* path_ptr_real = app_str_to_native(instance, path_ptr);
-    DEBUG_CHECK_RET0(path_ptr_real != NULL, "ow_create_shader_from_file path address is out of bounds");
-
-    size_t size = 0;
-    if(!wd_zip_get_file_size(&state->zip, path_ptr_real, &size)) {
-        wasm_runtime_set_exception(instance, "");
-        return 0;
-    }
-
-    uint8_t* bytecode = wd_malloc(size == 0 ? 1 : size);
-    if(!wd_zip_read_file(&state->zip, path_ptr_real, bytecode)) {
-        free(bytecode);
-        wasm_runtime_set_exception(instance, "");
-        return 0;
-    }
-
-    uint32_t result = create_shader_from_bytecode(exec_env, bytecode, size, fragment);
-    free(bytecode);
-    return result;
-}
-
-uint32_t ow_create_vertex_shader_from_bytecode(wasm_exec_env_t exec_env, uint32_t bytecode_ptr, uint32_t size) {
+uint32_t ow_create_vertex_shader(wasm_exec_env_t exec_env, uint32_t bytecode_ptr, uint32_t size) {
     wasm_module_inst_t instance = wasm_runtime_get_module_inst(exec_env);
     const uint8_t* bytecode_ptr_real = app_slice_to_native(instance, bytecode_ptr, size);
-    DEBUG_CHECK_RET0(
-        bytecode_ptr_real != NULL, "ow_create_vertex_shader_from_bytecode bytecode address is out of bounds");
-    return create_shader_from_bytecode(exec_env, bytecode_ptr_real, size, false);
+    DEBUG_CHECK_RET0(bytecode_ptr_real != NULL, "ow_create_vertex_shader bytecode address is out of bounds");
+    return create_shader(exec_env, bytecode_ptr_real, size, false);
 }
 
-uint32_t ow_create_vertex_shader_from_file(wasm_exec_env_t exec_env, uint32_t path_ptr) {
-    return create_shader_from_file(exec_env, path_ptr, false);
-}
-
-uint32_t ow_create_fragment_shader_from_bytecode(wasm_exec_env_t exec_env, uint32_t bytecode_ptr, uint32_t size) {
+uint32_t ow_create_fragment_shader(wasm_exec_env_t exec_env, uint32_t bytecode_ptr, uint32_t size) {
     wasm_module_inst_t instance = wasm_runtime_get_module_inst(exec_env);
     const uint8_t* bytecode_ptr_real = app_slice_to_native(instance, bytecode_ptr, size);
-    DEBUG_CHECK_RET0(
-        bytecode_ptr_real != NULL, "ow_create_fragment_shader_from_bytecode bytecode address is out of bounds");
-    return create_shader_from_bytecode(exec_env, bytecode_ptr_real, size, true);
-}
-
-uint32_t ow_create_fragment_shader_from_file(wasm_exec_env_t exec_env, uint32_t path_ptr) {
-    return create_shader_from_file(exec_env, path_ptr, true);
+    DEBUG_CHECK_RET0(bytecode_ptr_real != NULL, "ow_create_fragment_shader bytecode address is out of bounds");
+    return create_shader(exec_env, bytecode_ptr_real, size, true);
 }
 
 uint32_t ow_create_vertex_buffer(wasm_exec_env_t exec_env, uint32_t size) {
@@ -415,14 +334,14 @@ uint32_t ow_create_texture(wasm_exec_env_t exec_env, uint32_t info_ptr) {
     return result;
 }
 
-uint32_t ow_create_texture_from_image(wasm_exec_env_t exec_env, uint32_t path_ptr, uint32_t info_ptr) {
+uint32_t ow_create_texture_from_image(wasm_exec_env_t exec_env, uint32_t image_ptr, uint32_t size, uint32_t info_ptr) {
     wasm_module_inst_t instance = wasm_runtime_get_module_inst(exec_env);
     wd_state* state = wasm_runtime_get_custom_data(instance);
     wd_scene_state* scene = &state->scene;
 
-    const char* path = app_str_to_native(instance, path_ptr);
+    const uint8_t* image_data = app_slice_to_native(instance, image_ptr, size);
     ow_texture_info* info = (ow_texture_info*)app_slice_to_native(instance, info_ptr, sizeof(ow_texture_info));
-    DEBUG_CHECK_RET0(path != NULL, "ow_create_texture_from_image path address is out of bounds");
+    DEBUG_CHECK_RET0(image_data != NULL, "ow_create_texture_from_image image address is out of bounds");
     DEBUG_CHECK_RET0(info != NULL, "ow_create_texture_from_image info address is out of bounds");
     DEBUG_CHECK_RET0(scene->copy_pass != NULL, "called ow_create_texture_from_image when no copy pass is active");
 
@@ -432,20 +351,8 @@ uint32_t ow_create_texture_from_image(wasm_exec_env_t exec_env, uint32_t path_pt
         return 0;
     }
 
-    size_t image_size = 0;
-    if(!wd_zip_get_file_size(&state->zip, path, &image_size)) {
-        wasm_runtime_set_exception(instance, "");
-        return 0;
-    }
-
-    uint8_t* image_data = wd_malloc(image_size == 0 ? 1 : image_size);
-    if(!wd_zip_read_file(&state->zip, path, image_data)) {
-        free(image_data);
-        wasm_runtime_set_exception(instance, "");
-        return 0;
-    }
-
-    SDL_IOStream* image_stream = SDL_IOFromConstMem(image_data, image_size);
+    SDL_IOStream* image_stream = SDL_IOFromConstMem(image_data, size);
+    DEBUG_CHECK_RET0(image_stream != NULL, "SDL_IOFromConstMem failed: %s", SDL_GetError());
     SDL_Surface* raw_surface = IMG_Load_IO(image_stream, true);
     DEBUG_CHECK_RET0(raw_surface != NULL, "IMG_Load failed: %s", SDL_GetError());
 
@@ -461,7 +368,6 @@ uint32_t ow_create_texture_from_image(wasm_exec_env_t exec_env, uint32_t path_pt
     uint32_t result = ow_create_texture(exec_env, info_ptr);
     if(result == 0) {
         SDL_DestroySurface(surface);
-        free(image_data);
         return 0;
     }
 
@@ -497,7 +403,6 @@ uint32_t ow_create_texture_from_image(wasm_exec_env_t exec_env, uint32_t path_pt
     SDL_UploadToGPUTexture(scene->copy_pass, &source, &dest, false);
     SDL_ReleaseGPUTransferBuffer(scene->gpu, transfer_buffer);
     SDL_DestroySurface(surface);
-    free(image_data);
     return result;
 }
 
