@@ -326,23 +326,6 @@ void init();
 void update(float delta);
 
 /**
- * Gets the size of a file from the scene archive in bytes. Panics if file is not found.
- *
- * \param path Path to the file to load, absolute in the scene archive. A null-terminated byte string
- * \return Size of the file in bytes
- */
-extern size_t ow_get_file_size(const char* path);
-
-/**
- * Loads a file from the scene archive into provided data buffer. Panics if file is not found. Use `ow_get_file_size` to
- * get required size of the data buffer.
- *
- * \param path Path to the file to load, absolute in the scene archive. A null-terminated byte string
- * \param data Buffer to load data into
- */
-extern void ow_read_file(const char* path, uint8_t* data);
-
-/**
  * Begins a copy pass. Can be called only if no pass is currently active, panics elsewhere.
  */
 extern void ow_begin_copy_pass();
@@ -413,13 +396,13 @@ extern void ow_update_index_buffer(ow_index_buffer_id buffer, uint32_t offset, c
 extern ow_texture_id ow_create_texture(const ow_texture_info* info);
 
 /**
- * Creates a texture from a PNG or WEBP image file from the scene archive. Panics if file is not found.
+ * Creates a texture from PNG or WEBP image data. Panics if file is not found.
  *
- * \param path Path to the file to load, absolute in the scene archive. A null-terminated byte string
+ * \param path Path to the file to load, relative to the scene root. A null-terminated byte string
  * \param info Texture parameters
  * \return ID of created texture
  */
-extern ow_texture_id ow_create_texture_from_image(const char* path, const ow_texture_info* info);
+extern ow_texture_id ow_create_texture_from_image(const uint8_t* image, size_t size, const ow_texture_info* info);
 
 /**
  * Updates a `dest` texture region with data from `data`
@@ -452,15 +435,7 @@ extern ow_sampler_id ow_create_sampler(const ow_sampler_info* info);
  * \param size Size of the bytecode in bytes
  * \return ID of created vertex shader
  */
-extern ow_vertex_shader_id ow_create_vertex_shader_from_bytecode(const uint8_t* bytecode, size_t size);
-
-/**
- * Creates a vertex shader from a SPIR-V bytecode file from the scene archive. Panics if file is not found.
- *
- * \param path Path to the file to load, absolute in the scene archive. A null-terminated byte string
- * \return ID of created vertex shader
- */
-extern ow_vertex_shader_id ow_create_vertex_shader_from_file(const char* path);
+extern ow_vertex_shader_id ow_create_vertex_shader(const uint8_t* bytecode, size_t size);
 
 /**
  * Creates a fragment shader from SPIR-V bytecode.
@@ -469,15 +444,7 @@ extern ow_vertex_shader_id ow_create_vertex_shader_from_file(const char* path);
  * \param size Size of the bytecode in bytes
  * \return ID of created fragment shader
  */
-extern ow_fragment_shader_id ow_create_fragment_shader_from_bytecode(const uint8_t* bytecode, size_t size);
-
-/**
- * Creates a fragment shader from a SPIR-V bytecode file from the scene archive. Panics if file is not found.
- *
- * \param path Path to the file to load, absolute in the scene archive. A null-terminated byte string
- * \return ID of created fragment shader
- */
-extern ow_fragment_shader_id ow_create_fragment_shader_from_file(const char* path);
+extern ow_fragment_shader_id ow_create_fragment_shader(const uint8_t* bytecode, size_t size);
 
 /**
  * Creates a graphics pipeline.
