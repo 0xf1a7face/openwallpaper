@@ -5,7 +5,7 @@
 #include "defs.h"
 
 typedef struct {
-    uint8_t* data;
+    const uint8_t* data;
     size_t size;
     size_t offset;
     bool failed;
@@ -512,18 +512,13 @@ bool wpe_load_scene() {
         return true;
     }
 
-    size_t size = ow_get_file_size("scene.bin");
-    if(size == 0) {
+    size_t size = 0;
+    uint8_t* data = wpe_load_file("/scene.bin", &size);
+    if(data == NULL || size == 0) {
         printf("error: scene.bin is missing or empty\n");
+        free(data);
         return false;
     }
-
-    uint8_t* data = malloc(size);
-    if(data == NULL) {
-        printf("error: cannot allocate scene data\n");
-        return false;
-    }
-    ow_read_file("scene.bin", data);
 
     wpe_scene_bin_reader reader = {
         .data = data,

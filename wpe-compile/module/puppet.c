@@ -14,7 +14,7 @@
 #define WPE_MDL_FLAG_SKIN_WEIGHT 0x01000000u
 
 typedef struct {
-    uint8_t* data;
+    const uint8_t* data;
     size_t size;
     size_t offset;
     bool failed;
@@ -663,7 +663,7 @@ static bool parse_puppet_mdla(wpe_mdl_reader* reader, wpe_puppet_model* puppet) 
     return mdl_seek(reader, end_offset);
 }
 
-static bool parse_puppet_model(wpe_puppet_model* puppet, uint8_t* data, size_t size) {
+static bool parse_puppet_model(wpe_puppet_model* puppet, const uint8_t* data, size_t size) {
     wpe_mdl_reader reader = {
         .data = data,
         .size = size,
@@ -731,17 +731,13 @@ static bool load_puppet_model(wpe_puppet_model* puppet) {
         return false;
     }
 
-    size_t size = ow_get_file_size(puppet->path);
-    if(size == 0) {
+    size_t size = 0;
+    uint8_t* data = wpe_load_file(puppet->path, &size);
+    if(data == NULL || size == 0) {
+        free(data);
         return false;
     }
 
-    uint8_t* data = malloc(size);
-    if(data == NULL) {
-        return false;
-    }
-
-    ow_read_file(puppet->path, data);
     bool ok = parse_puppet_model(puppet, data, size);
     free(data);
     if(!ok) {

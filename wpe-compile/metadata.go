@@ -9,6 +9,7 @@ import (
 	"image/draw"
 	_ "image/gif"
 	_ "image/jpeg"
+	_ "image/png"
 	"math"
 	"os"
 	"path/filepath"
@@ -16,6 +17,7 @@ import (
 	xdraw "golang.org/x/image/draw"
 
 	"github.com/chai2010/webp"
+	ndl "github.com/mechakotik/ndl/lib"
 )
 
 const (
@@ -27,24 +29,51 @@ const (
 type Project struct {
 	Title       string `json:"title"`
 	Description string `json:"description"`
+	Category    string `json:"category"`
+	File        string `json:"file"`
 	Preview     string `json:"preview"`
+	Type        string `json:"type"`
 }
 
-func makeMetadata(projectPath string, outputMap *map[string][]byte) {
+type Metadata struct {
+	Title       string `ndl:"title,raw"`
+	Description string `ndl:"description,raw"`
+}
+
+func loadProject(projectPath string) (Project, error) {
 	projectBytes, err := os.ReadFile(projectPath)
 	if err != nil {
-		fmt.Printf("warning: failed to load project JSON: %s\n", err)
-		return
+		return Project{}, fmt.Errorf("failed to load project JSON: %w", err)
 	}
 
 	project := Project{}
-	err = json.Unmarshal(projectBytes, &project)
+	if err := json.Unmarshal(projectBytes, &project); err != nil {
+		return Project{}, fmt.Errorf("failed to parse project JSON: %w", err)
+	}
+	return project, nil
+}
+
+func makeMetadata(projectPath string, project Project, outputMap map[string][]byte) {
+	metadata, err := ndl.Marshal(Metadata{
+		Title:       project.Title,
+		Description: project.Description,
+	})
 	if err != nil {
-		fmt.Printf("warning: failed to parse project JSON: %s\n", err)
+		fmt.Printf("warning: failed to make metadata NDL: %s\n", err)
+	} else {
+		outputMap["metadata.ndl"] = []byte(metadata)
+	}
+
+	if project.Preview == "" {
 		return
 	}
 
-	previewPath := filepath.Join(filepath.Dir(projectPath), project.Preview)
+	previewPath, err := inputAssetPath(filepath.Dir(projectPath), project.Preview)
+	if err != nil {
+		fmt.Printf("warning: failed to resolve preview image: %s\n", err)
+		return
+	}
+
 	previewBytes, err := os.ReadFile(previewPath)
 	if err != nil {
 		fmt.Printf("warning: failed to load preview image: %s\n", err)
@@ -57,12 +86,7 @@ func makeMetadata(projectPath string, outputMap *map[string][]byte) {
 		return
 	}
 
-	(*outputMap)["preview.webp"] = previewWEBP
-	(*outputMap)["metadata.toml"] = fmt.Appendf(nil, `[info]
-name = """%s"""
-description = """%s"""
-preview = "preview.webp"
-`, project.Title, project.Description)
+	outputMap["preview.webp"] = previewWEBP
 }
 
 func makePreviewWEBP(imageBytes []byte) ([]byte, error) {
@@ -75,7 +99,7 @@ func makePreviewWEBP(imageBytes []byte) ([]byte, error) {
 		return nil, fmt.Errorf("decode preview image failed: %w", err)
 	}
 	switch format {
-	case "jpeg", "gif":
+	case "jpeg", "gif", "png":
 	default:
 		return nil, fmt.Errorf("unsupported image format: %s", format)
 	}

@@ -78,6 +78,58 @@ bool wpe_ends_with(const char* value, const char* suffix) {
     return strcmp(value + value_len - suffix_len, suffix) == 0;
 }
 
+uint8_t* wpe_load_file(const char* path, size_t* size) {
+    if(size != NULL) {
+        *size = 0;
+    }
+
+    FILE* file = fopen(path, "rb");
+    if(file == NULL && path != NULL && path[0] != '/') {
+        size_t path_len = strlen(path);
+        char* root_path = malloc(path_len + 2);
+        if(root_path != NULL) {
+            root_path[0] = '/';
+            memcpy(root_path + 1, path, path_len + 1);
+            file = fopen(root_path, "rb");
+            free(root_path);
+        }
+    }
+    if(file == NULL) {
+        return NULL;
+    }
+    if(fseek(file, 0, SEEK_END) != 0) {
+        fclose(file);
+        return NULL;
+    }
+    long end = ftell(file);
+    if(end < 0) {
+        fclose(file);
+        return NULL;
+    }
+    if(fseek(file, 0, SEEK_SET) != 0) {
+        fclose(file);
+        return NULL;
+    }
+
+    size_t file_size = (size_t)end;
+    uint8_t* data = malloc(file_size == 0 ? 1 : file_size);
+    if(data == NULL) {
+        fclose(file);
+        return NULL;
+    }
+    if(fread(data, 1, file_size, file) != file_size) {
+        free(data);
+        fclose(file);
+        return NULL;
+    }
+    fclose(file);
+
+    if(size != NULL) {
+        *size = file_size;
+    }
+    return data;
+}
+
 int wpe_texture_slot_from_uniform_name(const char* name) {
     if(!wpe_starts_with(name, "g_Texture")) {
         return -1;
@@ -347,11 +399,21 @@ void wpe_init_texture(wpe_texture* texture) {
         return;
     }
 
+    size_t size = 0;
     char path[64];
-    (void)snprintf(path, sizeof(path), "textures/%d.webp", texture->id);
-    texture->texture = ow_create_texture_from_image(path, &(ow_texture_info){
-                                                              .format = OW_TEXTURE_RGBA8_UNORM,
-                                                          });
+    (void)snprintf(path, sizeof(path), "/textures/%d.webp", texture->id);
+    uint8_t* data = wpe_load_file(path, &size);
+    if(data == NULL || size == 0) {
+        printf("warning: texture asset %s is missing\n", path);
+        free(data);
+        return;
+    }
+
+    texture->texture = ow_create_texture_from_image(data, size,
+        &(ow_texture_info){
+            .format = OW_TEXTURE_RGBA8_UNORM,
+        });
+    free(data);
 }
 
 void wpe_init_shader(wpe_shader* shader) {
@@ -359,11 +421,24 @@ void wpe_init_shader(wpe_shader* shader) {
         return;
     }
 
+    size_t vertex_size = 0;
+    size_t fragment_size = 0;
     char path[64];
-    (void)snprintf(path, sizeof(path), "shaders/%d_vertex.spv", shader->id);
-    shader->vertex_shader = ow_create_vertex_shader_from_file(path);
-    (void)snprintf(path, sizeof(path), "shaders/%d_fragment.spv", shader->id);
-    shader->fragment_shader = ow_create_fragment_shader_from_file(path);
+    (void)snprintf(path, sizeof(path), "/shaders/%d_vertex.spv", shader->id);
+    uint8_t* vertex_data = wpe_load_file(path, &vertex_size);
+    (void)snprintf(path, sizeof(path), "/shaders/%d_fragment.spv", shader->id);
+    uint8_t* fragment_data = wpe_load_file(path, &fragment_size);
+    if(vertex_data == NULL || vertex_size == 0 || fragment_data == NULL || fragment_size == 0) {
+        printf("warning: shader asset %d is missing\n", shader->id);
+        free(vertex_data);
+        free(fragment_data);
+        return;
+    }
+
+    shader->vertex_shader = ow_create_vertex_shader(vertex_data, vertex_size);
+    shader->fragment_shader = ow_create_fragment_shader(fragment_data, fragment_size);
+    free(vertex_data);
+    free(fragment_data);
 
     for(int i = 0; i < shader->num_samplers; i++) {
         shader->samplers[i].default_texture_ref = wpe_find_texture_by_name(shader->samplers[i].default_texture);

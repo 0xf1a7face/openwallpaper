@@ -588,6 +588,8 @@ typedef struct {
 
 extern wpe_scene scene;
 
+uint8_t* wpe_load_file(const char* path, size_t* size);
+
 wpe_mat4 wpe_mat4_identity();
 wpe_mat4 wpe_mat4_inverse_affine(wpe_mat4 m);
 wpe_transform_matrices wpe_default_transform_matrices();
