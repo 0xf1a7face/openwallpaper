@@ -100,6 +100,9 @@ int main(int argc, char* argv[]) {
     if(!wd_init_output(&state.output, &state.args, opengl)) {
         goto handle_error;
     }
+    if(state.args.display != NULL && state.args.display[0] != '\0' && state.output.window == NULL) {
+        wd_set_ready();
+    }
 
     if(scene_wallpaper) {
         if(!wd_run_scene(&state)) {
