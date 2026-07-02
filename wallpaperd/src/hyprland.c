@@ -257,6 +257,11 @@ handle_error:
     state->socket = -1;
 }
 
+void wd_hyprland_reset_output_hidden(wd_hyprland_state* state) {
+    state->output_hidden = false;
+    state->output_hidden_valid = false;
+}
+
 bool wd_hyprland_output_hidden(wd_hyprland_state* state, const char* output_name) {
     if(state->socket == -1) {
         return false;
@@ -275,7 +280,12 @@ bool wd_hyprland_output_hidden(wd_hyprland_state* state, const char* output_name
         return state->output_hidden;
     }
 
-    if(query_output_hidden(output_name, &state->output_hidden)) {
+    bool output_hidden = false;
+    if(query_output_hidden(output_name, &output_hidden)) {
+        state->output_hidden = output_hidden;
+        state->output_hidden_valid = true;
+    } else {
+        state->output_hidden = false;
         state->output_hidden_valid = true;
     }
 
@@ -292,6 +302,8 @@ void wd_hyprland_free(wd_hyprland_state* state) {
 #else
 
 void wd_hyprland_init(wd_hyprland_state* state) {}
+
+void wd_hyprland_reset_output_hidden(wd_hyprland_state* state) {}
 
 bool wd_hyprland_output_hidden(wd_hyprland_state* state, const char* output_name) {
     return false;

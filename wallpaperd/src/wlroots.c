@@ -167,6 +167,9 @@ static void registry_global_remove(void* data, struct wl_registry* registry, uin
         if(odata->target_output == output->output) {
             odata->target_output = NULL;
             odata->window_closed = true;
+            if(odata->session_type == SESSION_HYPRLAND) {
+                wd_hyprland_reset_output_hidden(&odata->hyprland);
+            }
         }
 
         if(output->output != NULL) {
@@ -202,6 +205,7 @@ static output_data* first_output(wlroots_output_state* odata) {
 }
 
 static bool select_output(wlroots_output_state* odata) {
+    struct wl_output* previous_output = odata->target_output;
     output_data* selected = NULL;
     if(odata->requested_output_name != NULL && odata->requested_output_name[0] != '\0') {
         selected = find_output_by_name(odata, odata->requested_output_name);
@@ -211,10 +215,16 @@ static bool select_output(wlroots_output_state* odata) {
 
     if(selected == NULL) {
         odata->target_output = NULL;
+        if(previous_output != NULL && odata->session_type == SESSION_HYPRLAND) {
+            wd_hyprland_reset_output_hidden(&odata->hyprland);
+        }
         return false;
     }
 
     odata->target_output = selected->output;
+    if(previous_output != odata->target_output && odata->session_type == SESSION_HYPRLAND) {
+        wd_hyprland_reset_output_hidden(&odata->hyprland);
+    }
     return true;
 }
 
@@ -272,12 +282,18 @@ static void layer_surface_closed(void* data, struct zwlr_layer_surface_v1* surfa
     wlroots_output_state* state = (wlroots_output_state*)data;
     state->window_closed = true;
     state->target_output = NULL;
+    if(state->session_type == SESSION_HYPRLAND) {
+        wd_hyprland_reset_output_hidden(&state->hyprland);
+    }
 }
 
 static const struct zwlr_layer_surface_v1_listener layer_surface_listener = {
     .configure = layer_surface_configure, .closed = layer_surface_closed};
 
 static void deactivate_window(wlroots_output_state* state) {
+    if(state->session_type == SESSION_HYPRLAND) {
+        wd_hyprland_reset_output_hidden(&state->hyprland);
+    }
     if(state->window != NULL) {
         SDL_DestroyWindow(state->window);
         state->window = NULL;
