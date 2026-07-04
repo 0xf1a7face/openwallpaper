@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gresources>
+  <gresource prefix="/org/openwallpaper/ui/icons">
+    <file alias="scalable/actions/owui-close-symbolic.svg">icons/close.svg</file>
+    <file alias="scalable/actions/owui-split-view-symbolic.svg">icons/split_view.svg</file>
+    <file alias="scalable/actions/owui-go-next-symbolic.svg">icons/go-next.svg</file>
+    <file alias="scalable/actions/owui-display-symbolic.svg">icons/display.svg</file>
+    <file alias="scalable/actions/owui-reset-symbolic.svg">icons/reset.svg</file>
+    <file alias="scalable/actions/owui-settings-symbolic.svg">icons/settings.svg</file>
+    <file alias="scalable/actions/owui-terminal-symbolic.svg">icons/terminal.svg</file>
+    <file alias="scalable/actions/owui-wallpaper-symbolic.svg">icons/wallpaper.svg</file>
+  </gresource>
+</gresources>

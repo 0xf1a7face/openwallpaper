@@ -1,0 +1,513 @@
+package main
+
+import (
+	"strconv"
+	"strings"
+
+	"github.com/diamondburned/gotk4-adwaita/pkg/adw"
+	"github.com/diamondburned/gotk4/pkg/gdk/v4"
+	"github.com/diamondburned/gotk4/pkg/glib/v2"
+	"github.com/diamondburned/gotk4/pkg/gtk/v4"
+	"github.com/diamondburned/gotk4/pkg/pango"
+)
+
+func buildSelectedPane(state *appState, displays []string) (*gtk.Box, detailWidgets) {
+	pane := gtk.NewBox(gtk.OrientationVertical, 0)
+	pane.SetSizeRequest(selectedPaneMinWidth, -1)
+	pane.SetHExpand(false)
+	pane.SetVExpand(true)
+
+	body := gtk.NewBox(gtk.OrientationVertical, 18)
+	body.SetHExpand(true)
+	body.SetVAlign(gtk.AlignStart)
+	body.SetVExpand(false)
+	body.SetMarginTop(18)
+	body.SetMarginBottom(18)
+	body.SetMarginStart(18)
+	body.SetMarginEnd(18)
+
+	scrolled := gtk.NewScrolledWindow()
+	scrolled.SetHExpand(true)
+	scrolled.SetVExpand(true)
+	scrolled.SetPolicy(gtk.PolicyNever, gtk.PolicyAutomatic)
+	scrolled.SetPropagateNaturalHeight(false)
+	scrolled.SetPropagateNaturalWidth(false)
+	scrolled.SetChild(body)
+	pane.Append(scrolled)
+
+	largePreview := buildPreviewBox("", 160, 90)
+	largePreview.overlay.SetSizeRequest(-1, 90)
+	largePreview.measure.SetSizeRequest(-1, 90)
+	largePreview.overlay.SetHExpand(true)
+	largePreview.overlay.SetHAlign(gtk.AlignFill)
+	largePreview.overlay.SetVAlign(gtk.AlignStart)
+
+	lastPreviewWidth := 0
+	largePreview.overlay.AddTickCallback(func(_ gtk.Widgetter, _ gdk.FrameClocker) bool {
+		width := largePreview.overlay.AllocatedWidth()
+		if width > 0 && width != lastPreviewWidth {
+			lastPreviewWidth = width
+			height := max(width*9/16, 90)
+			largePreview.overlay.SetSizeRequest(-1, height)
+			largePreview.measure.SetSizeRequest(-1, height)
+		}
+		return true
+	})
+
+	body.Append(largePreview.overlay)
+
+	title := gtk.NewLabel("")
+	title.AddCSSClass("title-2")
+	title.SetWrap(true)
+	title.SetWrapMode(pango.WrapWordChar)
+	title.SetEllipsize(pango.EllipsizeEnd)
+	title.SetLines(3)
+	title.SetJustify(gtk.JustifyCenter)
+	title.SetXAlign(0.5)
+	body.Append(title)
+
+	selectedRunControls, selectedRunButton, selectedRunMenu := buildSelectedRunControls(state, displays)
+	body.Append(selectedRunControls)
+
+	description := gtk.NewLabel("")
+	description.SetWrap(true)
+	description.SetWrapMode(pango.WrapWordChar)
+	description.SetEllipsize(pango.EllipsizeEnd)
+	description.SetLines(4)
+	description.SetJustify(gtk.JustifyLeft)
+	description.SetXAlign(0)
+	description.SetHAlign(gtk.AlignFill)
+
+	descriptionExpander := gtk.NewExpander("Description")
+	descriptionExpander.SetExpanded(false)
+	descriptionExpander.SetResizeToplevel(false)
+	descriptionExpander.SetChild(description)
+	descriptionExpander.SetVisible(false)
+	body.Append(descriptionExpander)
+
+	body.Append(sectionLabel("General options"))
+
+	optionsList := boxedList()
+
+	speedSpin := gtk.NewSpinButtonWithRange(0.01, 1000, 0.25)
+	speedSpin.SetDigits(2)
+	speedSpin.SetNumeric(true)
+	speedSpin.SetUpdatePolicy(gtk.UpdateIfValid)
+	speedSpin.SetValue(defaultWallpaperOptions().Speed)
+	optionsList.Append(labeledWidgetRow("Speed", speedSpin))
+
+	overrideOptionsRow := menuSectionButtonRow("settings", "Override global options", func() {
+		showOverrideOptionsDialog(state)
+	})
+	optionsList.Append(overrideOptionsRow)
+
+	optionsList.Append(menuSectionRow("terminal", "Custom commands"))
+	body.Append(optionsList)
+
+	detail := detailWidgets{
+		title:               title,
+		description:         description,
+		descriptionExpander: descriptionExpander,
+		preview:             largePreview,
+		speedSpin:           speedSpin,
+		overrideOptionsRow:  overrideOptionsRow,
+		selectedRunButton:   selectedRunButton,
+		selectedRunMenu:     selectedRunMenu,
+	}
+	updateDetail(detail, state)
+	detail.selectedRunButton.ConnectClicked(func() {
+		runSelectedWallpaper(detail, state)
+	})
+	detail.speedSpin.ConnectValueChanged(func() {
+		if !state.updatingDetail {
+			saveSelectedWallpaperOptions(detail, state)
+		}
+	})
+
+	return pane, detail
+}
+
+func buildSelectedRunControls(state *appState, displays []string) (*gtk.Box, *gtk.Button, *gtk.MenuButton) {
+	box := gtk.NewBox(gtk.OrientationHorizontal, 0)
+	box.AddCSSClass("linked")
+	box.SetHAlign(gtk.AlignFill)
+	box.SetHExpand(true)
+
+	runButton := gtk.NewButtonWithLabel(runButtonTitle(state.selectedDisplay))
+	runButton.AddCSSClass("suggested-action")
+	runButton.AddCSSClass("pill")
+	runButton.AddCSSClass("selected-run-main")
+	runButton.SetHExpand(true)
+	runButton.SetTooltipText("Run wallpaper")
+
+	menuButton := gtk.NewMenuButton()
+	menuButton.AddCSSClass("suggested-action")
+	menuButton.AddCSSClass("pill")
+	menuButton.AddCSSClass("selected-run-menu")
+	menuButton.SetSizeRequest(48, -1)
+	menuButton.SetTooltipText("Select display")
+
+	if len(displays) > 0 {
+		popover := gtk.NewPopover()
+		list := gtk.NewBox(gtk.OrientationVertical, 0)
+		list.SetMarginTop(6)
+		list.SetMarginBottom(6)
+		list.SetMarginStart(6)
+		list.SetMarginEnd(6)
+
+		for _, display := range displays {
+			display := display
+			item := gtk.NewButtonWithLabel(display)
+			item.AddCSSClass("flat")
+			item.SetHAlign(gtk.AlignFill)
+			item.ConnectClicked(func() {
+				state.selectedDisplay = display
+				runButton.SetLabel(runButtonTitle(display))
+				popover.Popdown()
+			})
+			list.Append(item)
+		}
+
+		popover.SetChild(list)
+		menuButton.SetPopover(popover)
+	}
+
+	box.Append(runButton)
+	box.Append(menuButton)
+	return box, runButton, menuButton
+}
+
+func updateDetail(detail detailWidgets, state *appState) {
+	state.updatingDetail = true
+	defer func() {
+		state.updatingDetail = false
+	}()
+
+	if state.selectedIndex >= 0 && state.selectedIndex < len(state.wallpapers) {
+		wallpaper := state.wallpapers[state.selectedIndex]
+		options := wallpaperOptionsForPath(*state.settings, wallpaper.launchPath)
+
+		detail.title.SetText(wallpaper.title)
+		detail.description.SetText(wallpaper.description)
+		detail.descriptionExpander.SetVisible(wallpaper.description != "")
+		detail.descriptionExpander.SetExpanded(false)
+		setPreviewContent(detail.preview, wallpaper.previewPath)
+		detail.speedSpin.SetValue(options.Speed)
+		detail.overrideOptionsRow.SetSensitive(true)
+		setRunButtonsSensitive(detail, !state.working.Load())
+		return
+	}
+
+	detail.title.SetText("Wallpaper")
+	detail.description.SetText("")
+	detail.descriptionExpander.SetVisible(false)
+	detail.descriptionExpander.SetExpanded(false)
+	setPreviewContent(detail.preview, "")
+	detail.speedSpin.SetValue(defaultWallpaperOptions().Speed)
+	detail.overrideOptionsRow.SetSensitive(false)
+	setRunButtonsSensitive(detail, false)
+}
+
+func runSelectedWallpaper(detail detailWidgets, state *appState) {
+	if state.working.Load() {
+		return
+	}
+	if state.selectedIndex < 0 || state.selectedIndex >= len(state.wallpapers) {
+		return
+	}
+
+	selectedWallpaper := state.wallpapers[state.selectedIndex]
+	state.working.Store(true)
+	setRunButtonsSensitive(detail, false)
+
+	display := state.selectedDisplay
+	if state.settings.AutorunWallpapers == nil {
+		state.settings.AutorunWallpapers = map[string]string{}
+	}
+	state.settings.AutorunWallpapers[display] = selectedWallpaper.launchPath
+	saveSettings(*state.settings)
+	state.notifyDisplayMappingsChanged()
+
+	saveSelectedWallpaperOptions(detail, state)
+	settingsSnapshot := cloneSettings(*state.settings)
+	go func() {
+		runWallpaper(state, settingsSnapshot, selectedWallpaper.launchPath, display)
+		glib.IdleAdd(func() {
+			state.working.Store(false)
+			setRunButtonsSensitive(detail, state.selectedIndex >= 0 && state.selectedIndex < len(state.wallpapers))
+		})
+	}()
+}
+
+func saveSelectedWallpaperOptions(detail detailWidgets, state *appState) {
+	if state.selectedIndex < 0 || state.selectedIndex >= len(state.wallpapers) {
+		return
+	}
+
+	wallpaper := state.wallpapers[state.selectedIndex]
+	options := wallpaperOptionsForPath(*state.settings, wallpaper.launchPath)
+	options.Speed = detail.speedSpin.Value()
+
+	state.settings.setWallpaperOptions(wallpaper.launchPath, options)
+	saveSettings(*state.settings)
+}
+
+func showOverrideOptionsDialog(state *appState) {
+	if state.selectedIndex < 0 || state.selectedIndex >= len(state.wallpapers) || state.dialogParent == nil {
+		return
+	}
+
+	wallpaper := state.wallpapers[state.selectedIndex]
+	options := wallpaperOptionsForPath(*state.settings, wallpaper.launchPath)
+
+	dialog := adw.NewAlertDialog("Override global options", "")
+	dialog.AddResponse("close", "Close")
+	dialog.SetDefaultResponse("close")
+	dialog.SetCloseResponse("close")
+
+	list := boxedList()
+	list.SetSizeRequest(460, -1)
+
+	updating := false
+	save := func() {
+		if updating {
+			return
+		}
+		state.settings.setWallpaperOptions(wallpaper.launchPath, options)
+		saveSettings(*state.settings)
+	}
+	refreshControls := func() {}
+	saveAndRefresh := func(update func()) {
+		if updating {
+			return
+		}
+		update()
+		save()
+		refreshControls()
+	}
+
+	if isSceneFile(wallpaper.launchPath) {
+		scene := func() sceneWallpaperOptions {
+			return sceneOptionsWithOverrides(globalSceneOptions(*state.settings), options)
+		}
+
+		vSyncSwitch := gtk.NewSwitch()
+		vSyncSwitch.SetVAlign(gtk.AlignCenter)
+		vSyncReset := overrideResetButton()
+		list.Append(overrideWidgetRow("V-Sync", vSyncReset, vSyncSwitch))
+
+		fpsSpin := gtk.NewSpinButtonWithRange(1, 720, 1)
+		fpsReset := overrideResetButton()
+		list.Append(overrideWidgetRow("FPS limit", fpsReset, fpsSpin))
+
+		dgpuSwitch := gtk.NewSwitch()
+		dgpuSwitch.SetVAlign(gtk.AlignCenter)
+		dgpuReset := overrideResetButton()
+		list.Append(overrideWidgetRow("Prefer discrete GPU", dgpuReset, dgpuSwitch))
+
+		audioSwitch := gtk.NewSwitch()
+		audioSwitch.SetVAlign(gtk.AlignCenter)
+		audioReset := overrideResetButton()
+		list.Append(overrideWidgetRow("Enable audio visualization", audioReset, audioSwitch))
+
+		backendDropdown := gtk.NewDropDownFromStrings([]string{"Default", "PipeWire", "PulseAudio", "PortAudio"})
+		backendReset := overrideResetButton()
+		list.Append(overrideWidgetRow("Audio backend", backendReset, backendDropdown))
+
+		audioSource := gtk.NewEntry()
+		audioSource.SetPlaceholderText("Default")
+		audioSource.SetHExpand(true)
+		sourceReset := overrideResetButton()
+		list.Append(overrideWidgetRow("Audio source", sourceReset, audioSource))
+
+		refreshControls = func() {
+			current := scene()
+			updating = true
+			vSyncSwitch.SetActive(current.VSync)
+			vSyncReset.SetSensitive(options.VSyncOverridden)
+			fpsSpin.SetValue(float64(current.FPSLimit))
+			fpsReset.SetSensitive(options.FPSLimitOverridden)
+			dgpuSwitch.SetActive(current.PreferDiscreteGPU)
+			dgpuReset.SetSensitive(options.PreferDiscreteGPUOverridden)
+			audioSwitch.SetActive(current.AudioVisualization)
+			audioReset.SetSensitive(options.AudioVisualizationOverridden)
+			backendDropdown.SetSelected(min(current.AudioBackend, 3))
+			backendReset.SetSensitive(options.AudioBackendOverridden)
+			audioSource.SetText(current.AudioSource)
+			sourceReset.SetSensitive(options.AudioSourceOverridden)
+			fpsSpin.SetSensitive(!current.VSync)
+			audioEnabled := current.AudioVisualization
+			backendDropdown.SetSensitive(audioEnabled)
+			audioSource.SetSensitive(audioEnabled)
+			updating = false
+		}
+
+		vSyncSwitch.ConnectStateSet(func(value bool) bool {
+			saveAndRefresh(func() {
+				options.VSync = value
+				options.VSyncOverridden = true
+			})
+			return false
+		})
+		vSyncReset.ConnectClicked(func() {
+			saveAndRefresh(func() { options.VSyncOverridden = false })
+		})
+
+		fpsSpin.ConnectValueChanged(func() {
+			saveAndRefresh(func() {
+				options.FPSLimit = fpsSpin.ValueAsInt()
+				options.FPSLimitOverridden = true
+			})
+		})
+		fpsReset.ConnectClicked(func() {
+			saveAndRefresh(func() { options.FPSLimitOverridden = false })
+		})
+
+		dgpuSwitch.ConnectStateSet(func(value bool) bool {
+			saveAndRefresh(func() {
+				options.PreferDiscreteGPU = value
+				options.PreferDiscreteGPUOverridden = true
+			})
+			return false
+		})
+		dgpuReset.ConnectClicked(func() {
+			saveAndRefresh(func() { options.PreferDiscreteGPUOverridden = false })
+		})
+
+		audioSwitch.ConnectStateSet(func(value bool) bool {
+			saveAndRefresh(func() {
+				options.AudioVisualization = value
+				options.AudioVisualizationOverridden = true
+			})
+			return false
+		})
+		audioReset.ConnectClicked(func() {
+			saveAndRefresh(func() { options.AudioVisualizationOverridden = false })
+		})
+
+		backendDropdown.NotifyProperty("selected", func() {
+			saveAndRefresh(func() {
+				options.AudioBackend = backendDropdown.Selected()
+				options.AudioBackendOverridden = true
+			})
+		})
+		backendReset.ConnectClicked(func() {
+			saveAndRefresh(func() { options.AudioBackendOverridden = false })
+		})
+
+		audioSource.NotifyProperty("text", func() {
+			saveAndRefresh(func() {
+				options.AudioSource = audioSource.Text()
+				options.AudioSourceOverridden = true
+			})
+		})
+		sourceReset.ConnectClicked(func() {
+			saveAndRefresh(func() { options.AudioSourceOverridden = false })
+		})
+	} else if isVideoFile(wallpaper.launchPath) {
+		video := func() videoWallpaperOptions {
+			return videoOptionsWithOverrides(globalVideoOptions(*state.settings), options)
+		}
+
+		scaleModeDropdown := gtk.NewDropDownFromStrings([]string{"Aspect crop", "Aspect fit", "Stretch"})
+		scaleModeReset := overrideResetButton()
+		list.Append(overrideWidgetRow("Scale mode", scaleModeReset, scaleModeDropdown))
+
+		filterOptions := overrideFilterOptions(video().Filter)
+		filterDropdown := gtk.NewDropDownFromStrings(filterOptions)
+		filterReset := overrideResetButton()
+		list.Append(overrideWidgetRow("Filter", filterReset, filterDropdown))
+
+		refreshControls = func() {
+			current := video()
+			updating = true
+			scaleModeDropdown.SetSelected(scaleModeIndex(current.ScaleMode))
+			scaleModeReset.SetSensitive(options.ScaleModeOverridden)
+			filterDropdown.SetSelected(filterOptionIndex(filterOptions, current.Filter))
+			filterReset.SetSensitive(options.FilterOverridden)
+			updating = false
+		}
+
+		scaleModeDropdown.NotifyProperty("selected", func() {
+			saveAndRefresh(func() {
+				options.ScaleMode = scaleModeValue(scaleModeDropdown.Selected())
+				options.ScaleModeOverridden = true
+			})
+		})
+		scaleModeReset.ConnectClicked(func() {
+			saveAndRefresh(func() { options.ScaleModeOverridden = false })
+		})
+
+		filterDropdown.NotifyProperty("selected", func() {
+			saveAndRefresh(func() {
+				selected := filterDropdown.Selected()
+				if selected == 0 || int(selected) >= len(filterOptions) {
+					options.Filter = ""
+				} else {
+					options.Filter = filterOptions[selected]
+				}
+				options.FilterOverridden = true
+			})
+		})
+		filterReset.ConnectClicked(func() {
+			saveAndRefresh(func() { options.FilterOverridden = false })
+		})
+	}
+
+	refreshControls()
+
+	content := gtk.NewBox(gtk.OrientationVertical, 0)
+	content.SetMarginTop(6)
+	content.SetMarginBottom(6)
+	content.SetMarginStart(6)
+	content.SetMarginEnd(6)
+	content.Append(list)
+	dialog.SetExtraChild(content)
+	dialog.Present(state.dialogParent)
+}
+
+func overrideResetButton() *gtk.Button {
+	button := adwaitaIconButton("reset", "Use default")
+	button.AddCSSClass("flat")
+	return button
+}
+
+func overrideWidgetRow(labelText string, resetButton *gtk.Button, widget gtk.Widgetter) *gtk.ListBoxRow {
+	return labeledWidgetRow(labelText, widget, resetButton)
+}
+
+func overrideFilterOptions(current string) []string {
+	filters := loadMPVScaleFilters()
+	current = strings.TrimSpace(current)
+	if current != "" && indexOfString(filters, current) < 0 {
+		filters = append([]string{current}, filters...)
+	}
+	return append([]string{"Default"}, filters...)
+}
+
+func filterOptionIndex(options []string, filter string) uint {
+	if strings.TrimSpace(filter) == "" {
+		return 0
+	}
+	index := indexOfString(options, filter)
+	if index < 0 {
+		return 0
+	}
+	return uint(index)
+}
+
+func formatSpeed(value float64) string {
+	return strconv.FormatFloat(value, 'f', -1, 64)
+}
+
+func setRunButtonsSensitive(detail detailWidgets, sensitive bool) {
+	detail.selectedRunButton.SetSensitive(sensitive)
+	detail.selectedRunMenu.SetSensitive(sensitive)
+}
+
+func runButtonTitle(display string) string {
+	if strings.TrimSpace(display) == "" {
+		return "Run"
+	}
+	return "Run on " + display
+}
