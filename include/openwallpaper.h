@@ -1,3 +1,16 @@
+/**
+ * @file openwallpaper.h
+ * @brief API exposed by OpenWallpaper host application (wallpaperd)
+ *
+ * OpenWallpaper scene is a directory containing a `scene.wasm` WebAssembly module and any asset files it needs. The
+ * scene module must implement and export functions `init()` (called once when initializing) and `update()` (called each
+ * frame and should update/redraw the scene). Scene module can use all `extern` functions from `openwallpaper.h`.
+ *
+ * When you run the scene by passing `scene.wasm` path to wallpaperd, the scene root is the directory containing that
+ * file. Module has read-only access to all files in the scene root through standard C file I/O API (`fopen`, `fread`,
+ * etc.). Standard input and output are also available and will be forwarded to the host application.
+ */
+
 #ifndef OPENWALLPAPER_H
 #define OPENWALLPAPER_H
 
@@ -396,9 +409,10 @@ extern void ow_update_index_buffer(ow_index_buffer_id buffer, uint32_t offset, c
 extern ow_texture_id ow_create_texture(const ow_texture_info* info);
 
 /**
- * Creates a texture from PNG or WEBP image data. Panics if file is not found.
+ * Creates a texture from PNG or WEBP image data.
  *
- * \param path Path to the file to load, relative to the scene root. A null-terminated byte string
+ * \param image Pointer to the encoded image data
+ * \param size Size of the encoded image data in bytes
  * \param info Texture parameters
  * \return ID of created texture
  */
@@ -429,7 +443,10 @@ extern void ow_generate_mipmaps(ow_texture_id texture);
 extern ow_sampler_id ow_create_sampler(const ow_sampler_info* info);
 
 /**
- * Creates a vertex shader from SPIR-V bytecode.
+ * Creates a vertex shader from SPIR-V bytecode. Shader must use following resource sets:
+ *
+ * - `set = 0` for samplers
+ * - `set = 1` for uniform buffers
  *
  * \param bytecode Pointer to the bytecode
  * \param size Size of the bytecode in bytes
@@ -438,7 +455,10 @@ extern ow_sampler_id ow_create_sampler(const ow_sampler_info* info);
 extern ow_vertex_shader_id ow_create_vertex_shader(const uint8_t* bytecode, size_t size);
 
 /**
- * Creates a fragment shader from SPIR-V bytecode.
+ * Creates a fragment shader from SPIR-V bytecode. Shader must use following resource sets:
+ *
+ * - `set = 2` for samplers
+ * - `set = 3` for uniform buffers
  *
  * \param bytecode Pointer to the bytecode
  * \param size Size of the bytecode in bytes
