@@ -1,4 +1,4 @@
-#include "openwallpaper.h"
+#include "../util.h"
 
 typedef struct vertex_t {
     float x, y;
@@ -28,18 +28,20 @@ __attribute__((export_name("init"))) void init() {
     ow_update_vertex_buffer(vertex_buffer, 0, vertices, sizeof(vertices));
     ow_end_copy_pass();
 
-    vertex_shader = ow_create_vertex_shader_from_file("vertex.spv");
-    fragment_shader = ow_create_fragment_shader_from_file("fragment.spv");
+    vertex_shader = util_create_vertex_shader_from_file("vertex.spv");
+    fragment_shader = util_create_fragment_shader_from_file("fragment.spv");
 
     pipeline = ow_create_pipeline(&(ow_pipeline_info){
-        .vertex_bindings = &(ow_vertex_binding_info){
-            .slot = 0,
-            .stride = sizeof(vertex_t),
-        },
+        .vertex_bindings =
+            &(ow_vertex_binding_info){
+                .slot = 0,
+                .stride = sizeof(vertex_t),
+            },
         .vertex_bindings_count = 1,
-        .vertex_attributes = (ow_vertex_attribute[]){
-            {.slot = 0, .location = 0, .type = OW_ATTRIBUTE_FLOAT2, .offset = 0},
-        },
+        .vertex_attributes =
+            (ow_vertex_attribute[]){
+                {.slot = 0, .location = 0, .type = OW_ATTRIBUTE_FLOAT2, .offset = 0},
+            },
         .vertex_attributes_count = 1,
         .vertex_shader = vertex_shader,
         .fragment_shader = fragment_shader,

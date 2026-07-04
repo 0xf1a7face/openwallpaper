@@ -1,5 +1,4 @@
-#include <stdlib.h>
-#include "openwallpaper.h"
+#include "../util.h"
 
 #define NUM_INSTANCES 200
 
@@ -55,9 +54,9 @@ __attribute__((export_name("init"))) void init() {
     ow_begin_copy_pass();
     ow_update_vertex_buffer(vertex_buffer, 0, vertices, sizeof(vertices));
     ow_update_vertex_buffer(instance_buffer, 0, instance_data, sizeof(instance_data));
-    texture = ow_create_texture_from_image("dot.png", &(ow_texture_info){
-        .format = OW_TEXTURE_RGBA8_UNORM,
-    });
+    texture = util_create_texture_from_file("dot.png", &(ow_texture_info){
+                                                           .format = OW_TEXTURE_RGBA8_UNORM,
+                                                       });
     ow_end_copy_pass();
 
     sampler = ow_create_sampler(&(ow_sampler_info){
@@ -68,21 +67,23 @@ __attribute__((export_name("init"))) void init() {
         .wrap_y = OW_WRAP_CLAMP,
     });
 
-    ow_vertex_shader_id vertex_shader = ow_create_vertex_shader_from_file("vertex.spv");
-    ow_fragment_shader_id fragment_shader = ow_create_fragment_shader_from_file("fragment.spv");
+    ow_vertex_shader_id vertex_shader = util_create_vertex_shader_from_file("vertex.spv");
+    ow_fragment_shader_id fragment_shader = util_create_fragment_shader_from_file("fragment.spv");
 
     pipeline = ow_create_pipeline(&(ow_pipeline_info){
-        .vertex_bindings = (ow_vertex_binding_info[]){
-            {.slot = 0, .stride = sizeof(vertex_t)},
-            {.slot = 1, .stride = sizeof(instance_t), .per_instance = true},
-        },
+        .vertex_bindings =
+            (ow_vertex_binding_info[]){
+                {.slot = 0, .stride = sizeof(vertex_t)},
+                {.slot = 1, .stride = sizeof(instance_t), .per_instance = true},
+            },
         .vertex_bindings_count = 2,
-        .vertex_attributes = (ow_vertex_attribute[]){
-            {.location = 0, .slot = 0, .type = OW_ATTRIBUTE_FLOAT2, .offset = 0},
-            {.location = 1, .slot = 0, .type = OW_ATTRIBUTE_FLOAT2, .offset = sizeof(float) * 2},
-            {.location = 2, .slot = 1, .type = OW_ATTRIBUTE_FLOAT2, .offset = 0},
-            {.location = 3, .slot = 1, .type = OW_ATTRIBUTE_FLOAT, .offset = sizeof(float) * 2},
-        },
+        .vertex_attributes =
+            (ow_vertex_attribute[]){
+                {.location = 0, .slot = 0, .type = OW_ATTRIBUTE_FLOAT2, .offset = 0},
+                {.location = 1, .slot = 0, .type = OW_ATTRIBUTE_FLOAT2, .offset = sizeof(float) * 2},
+                {.location = 2, .slot = 1, .type = OW_ATTRIBUTE_FLOAT2, .offset = 0},
+                {.location = 3, .slot = 1, .type = OW_ATTRIBUTE_FLOAT, .offset = sizeof(float) * 2},
+            },
         .vertex_attributes_count = 4,
         .vertex_shader = vertex_shader,
         .fragment_shader = fragment_shader,
@@ -97,15 +98,17 @@ __attribute__((export_name("update"))) void update(float delta) {
     ow_end_copy_pass();
 
     ow_bindings_info bindings = {
-        .vertex_buffers = (ow_vertex_buffer_id[]){
-            vertex_buffer,
-            instance_buffer,
-        },
+        .vertex_buffers =
+            (ow_vertex_buffer_id[]){
+                vertex_buffer,
+                instance_buffer,
+            },
         .vertex_buffers_count = 2,
-        .texture_bindings = &(ow_texture_binding){
-            .texture = texture,
-            .sampler = sampler,
-        },
+        .texture_bindings =
+            &(ow_texture_binding){
+                .texture = texture,
+                .sampler = sampler,
+            },
         .texture_bindings_count = 1,
     };
 
