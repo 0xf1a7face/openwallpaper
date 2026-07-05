@@ -8,11 +8,12 @@ option(WD_VIDEO "Enable video wallpaper support with mpv" ON)
 option(WD_WLROOTS "Enable wlroots output support" ON)
 option(WD_AUDIO_VISUALIZER "Enable audio visualization support" ON)
 option(WD_BUNDLE_WAMRC "Build bundled wamrc for wasm AOT compilation" ON)
+option(WD_WAMRC_STATIC_LLVM "Statically link vendored LLVM to bundled wamrc" OFF)
 
-option(WD_SDL_SHARED "Dynamically link to system SDL" OFF)
-option(WD_SDL_IMAGE_SHARED "Dynamically link to system SDL_image" OFF)
-option(WD_SDL_SHADERCROSS_SHARED "Dynamically link to system SDL_shadercross" OFF)
-option(WD_FFTW_SHARED "Dynamically link to system FFTW" OFF)
+option(WD_SDL_SHARED "Dynamically link system SDL" OFF)
+option(WD_SDL_IMAGE_SHARED "Dynamically link system SDL_image" OFF)
+option(WD_SDL_SHADERCROSS_SHARED "Dynamically link system SDL_shadercross" OFF)
+option(WD_FFTW_SHARED "Dynamically link system FFTW" OFF)
 
 option(WD_SANITIZE "Build with sanitizers" OFF)
 
@@ -106,38 +107,110 @@ set(WAMR_BUILD_REF_TYPES 1)
 set(WAMR_ROOT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/external/wasm-micro-runtime)
 
 if(WD_BUNDLE_WAMRC)
-    if(NOT DEFINED WAMR_BUILD_WITH_CUSTOM_LLVM)
-        set(WAMR_BUILD_WITH_CUSTOM_LLVM 1)
-    endif()
+    if(WD_WAMRC_STATIC_LLVM)
+        include(ExternalProject)
 
-    if(NOT LLVM_DIR)
-        foreach(WD_LLVM_VERSION 20 19 18 17)
-            foreach(WD_LLVM_CMAKE_DIR
-                    /usr/lib/llvm/${WD_LLVM_VERSION}/lib64/cmake/llvm
-                    /usr/lib/llvm/${WD_LLVM_VERSION}/lib/cmake/llvm
-                    /usr/lib/llvm-${WD_LLVM_VERSION}/lib/cmake/llvm)
+        if(CMAKE_BUILD_TYPE)
+            set(WD_WAMRC_BUILD_TYPE "${CMAKE_BUILD_TYPE}")
+        else()
+            set(WD_WAMRC_BUILD_TYPE Release)
+        endif()
+
+        set(WD_WAMRC_BUILD_DIR "${CMAKE_CURRENT_BINARY_DIR}/wallpaperd-wamrc-build")
+        set(WD_WAMRC_BINARY_PATH "${CMAKE_CURRENT_BINARY_DIR}/wallpaperd-wamrc")
+        set(WD_WAMRC_LLVM_EXTRA_CMAKE_FLAGS
+            "-DLLVM_ENABLE_ZLIB=OFF -DLLVM_ENABLE_ZSTD=OFF -DLLVM_ENABLE_LIBXML2=OFF")
+        set(WD_WAMRC_LLVM_REPOSITORY "https://github.com/llvm/llvm-project.git"
+            CACHE STRING "LLVM repository used for statically linked wallpaperd-wamrc")
+        set(WD_WAMRC_LLVM_TAG "release/22.x"
+            CACHE STRING "LLVM tag or branch used for statically linked wallpaperd-wamrc")
+        set(WD_WAMRC_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS}")
+        string(APPEND WD_WAMRC_EXE_LINKER_FLAGS " -static-libstdc++ -static-libgcc")
+        string(STRIP "${WD_WAMRC_EXE_LINKER_FLAGS}" WD_WAMRC_EXE_LINKER_FLAGS)
+        set(WD_WAMRC_LLVM_SOURCE_DIR "${WAMR_ROOT_DIR}/core/deps/llvm")
+        set(WD_WAMRC_VENDORED_LLVM_CORE
+            "${WD_WAMRC_LLVM_SOURCE_DIR}/build/lib/libLLVMCore.a")
+        set(WD_WAMRC_VENDORED_LLVM_CMAKE_DIR
+            "${WD_WAMRC_LLVM_SOURCE_DIR}/build/lib/cmake/llvm")
+
+        ExternalProject_Add(wallpaperd-wamrc-llvm
+            PREFIX "${CMAKE_CURRENT_BINARY_DIR}/wallpaperd-wamrc-llvm"
+            GIT_REPOSITORY "${WD_WAMRC_LLVM_REPOSITORY}"
+            GIT_TAG "${WD_WAMRC_LLVM_TAG}"
+            GIT_SHALLOW TRUE
+            GIT_PROGRESS TRUE
+            SOURCE_DIR "${WD_WAMRC_LLVM_SOURCE_DIR}"
+            CONFIGURE_COMMAND ""
+            BUILD_COMMAND ""
+            INSTALL_COMMAND "")
+
+        ExternalProject_Add(wallpaperd-wamrc
+            SOURCE_DIR "${WAMR_ROOT_DIR}/wamr-compiler"
+            BINARY_DIR "${WD_WAMRC_BUILD_DIR}"
+            DEPENDS wallpaperd-wamrc-llvm
+            CMAKE_ARGS
+                -DCMAKE_BUILD_TYPE=${WD_WAMRC_BUILD_TYPE}
+                -DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}
+                -DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}
+                "-DCMAKE_EXE_LINKER_FLAGS=${WD_WAMRC_EXE_LINKER_FLAGS}"
+                -DLLVM_DIR=${WD_WAMRC_VENDORED_LLVM_CMAKE_DIR}
+                -DWAMR_BUILD_PLATFORM=${WAMR_BUILD_PLATFORM}
+                -DWAMR_BUILD_TARGET=${WAMR_BUILD_TARGET}
+                -DWAMR_BUILD_WITH_CUSTOM_LLVM=0
+            BUILD_COMMAND "${CMAKE_COMMAND}" --build <BINARY_DIR> --target wamrc --parallel
+            INSTALL_COMMAND "${CMAKE_COMMAND}" -E copy_if_different <BINARY_DIR>/wamrc "${WD_WAMRC_BINARY_PATH}"
+            INSTALL_BYPRODUCTS "${WD_WAMRC_BINARY_PATH}"
+            USES_TERMINAL_CONFIGURE TRUE
+            USES_TERMINAL_BUILD TRUE)
+
+        ExternalProject_Add_Step(wallpaperd-wamrc prepare_llvm
+            COMMAND "${CMAKE_COMMAND}" -E chdir "${WAMR_ROOT_DIR}/wamr-compiler"
+                    ./build_llvm.sh --arch X86 --extra-cmake-flags "${WD_WAMRC_LLVM_EXTRA_CMAKE_FLAGS}"
+            BYPRODUCTS "${WD_WAMRC_VENDORED_LLVM_CORE}"
+            DEPENDEES download
+            DEPENDERS configure
+            USES_TERMINAL TRUE)
+
+        message(STATUS "Building bundled wamrc with vendored static LLVM")
+        target_compile_definitions(wallpaperd PRIVATE WD_WAMRC_BINARY="wallpaperd-wamrc")
+        add_dependencies(wallpaperd wallpaperd-wamrc)
+        install(PROGRAMS "${WD_WAMRC_BINARY_PATH}" DESTINATION ${CMAKE_INSTALL_BINDIR} RENAME wallpaperd-wamrc)
+    else()
+        if(NOT DEFINED WAMR_BUILD_WITH_CUSTOM_LLVM)
+            set(WAMR_BUILD_WITH_CUSTOM_LLVM 1)
+        endif()
+
+        find_package(LLVM QUIET CONFIG)
+        if(NOT LLVM_FOUND AND NOT LLVM_DIR)
+            file(GLOB WD_LLVM_CMAKE_DIRS LIST_DIRECTORIES true
+                    /usr/lib/llvm*/lib64/cmake/llvm
+                    /usr/lib/llvm*/lib/cmake/llvm
+                    /usr/lib/llvm/*/lib64/cmake/llvm
+                    /usr/lib/llvm/*/lib/cmake/llvm)
+            list(REMOVE_DUPLICATES WD_LLVM_CMAKE_DIRS)
+            list(SORT WD_LLVM_CMAKE_DIRS COMPARE NATURAL ORDER DESCENDING)
+
+            foreach(WD_LLVM_CMAKE_DIR IN LISTS WD_LLVM_CMAKE_DIRS)
                 if(EXISTS "${WD_LLVM_CMAKE_DIR}/LLVMConfig.cmake")
                     set(LLVM_DIR "${WD_LLVM_CMAKE_DIR}")
                     break()
                 endif()
             endforeach()
-            if(LLVM_DIR)
-                break()
-            endif()
-        endforeach()
-    endif()
 
-    find_package(LLVM QUIET CONFIG)
-    if(LLVM_FOUND)
-        message(STATUS "Found LLVM ${LLVM_PACKAGE_VERSION}, building bundled wamrc")
-        target_compile_definitions(wallpaperd PRIVATE WD_WAMRC_BINARY="wallpaperd-wamrc")
-        unset(WAMR_BUILD_FAST_INTERP)
-        add_subdirectory(external/wasm-micro-runtime/wamr-compiler EXCLUDE_FROM_ALL)
-        set_target_properties(wamrc PROPERTIES OUTPUT_NAME wallpaperd-wamrc)
-        add_dependencies(wallpaperd wamrc)
-        install(PROGRAMS $<TARGET_FILE:wamrc> DESTINATION ${CMAKE_INSTALL_BINDIR} RENAME wallpaperd-wamrc)
-    else()
-        message(WARNING "Suitable LLVM not found, not building bundled wamrc")
+            find_package(LLVM QUIET CONFIG)
+        endif()
+
+        if(LLVM_FOUND)
+            message(STATUS "Found LLVM ${LLVM_PACKAGE_VERSION}, building bundled wamrc")
+            target_compile_definitions(wallpaperd PRIVATE WD_WAMRC_BINARY="wallpaperd-wamrc")
+            unset(WAMR_BUILD_FAST_INTERP)
+            add_subdirectory(external/wasm-micro-runtime/wamr-compiler EXCLUDE_FROM_ALL)
+            set_target_properties(wamrc PROPERTIES OUTPUT_NAME wallpaperd-wamrc)
+            add_dependencies(wallpaperd wamrc)
+            install(PROGRAMS $<TARGET_FILE:wamrc> DESTINATION ${CMAKE_INSTALL_BINDIR} RENAME wallpaperd-wamrc)
+        else()
+            message(WARNING "LLVM not found, not building bundled wamrc")
+        endif()
     endif()
 endif()
 
