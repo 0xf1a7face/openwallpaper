@@ -462,13 +462,6 @@ func settingsPath() string {
 	return filepath.Join(configHome(), "owui", "settings.ndl")
 }
 
-func dataPath() string {
-	if home, err := os.UserHomeDir(); err == nil {
-		return filepath.Join(home, "owui")
-	}
-	return "owui"
-}
-
 func configHome() string {
 	if path := os.Getenv("XDG_CONFIG_HOME"); path != "" {
 		return path

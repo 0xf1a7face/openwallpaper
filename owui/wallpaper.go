@@ -442,27 +442,30 @@ func quoteCommandArg(arg string) string {
 }
 
 func loadWallpapers() []wallpaper {
-	dataDir := dataPath()
-	_ = os.MkdirAll(dataDir, 0o755)
-
-	entries, err := os.ReadDir(dataDir)
-	if err != nil {
-		return nil
+	if userDir := userWallpaperDir(); userDir != "" {
+		_ = os.MkdirAll(userDir, 0o755)
 	}
 
-	wallpapers := make([]wallpaper, 0, len(entries))
-	for _, entry := range entries {
-		if !entry.IsDir() {
+	wallpapers := []wallpaper{}
+	for _, dataDir := range wallpaperDirs() {
+		entries, err := os.ReadDir(dataDir)
+		if err != nil {
 			continue
 		}
 
-		wallpaperPath := filepath.Join(dataDir, entry.Name())
-		launchPath := wallpaperLaunchTarget(wallpaperPath)
-		if launchPath == "" {
-			continue
-		}
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				continue
+			}
 
-		wallpapers = append(wallpapers, loadWallpaper(wallpaperPath, launchPath, entry.Name()))
+			wallpaperPath := filepath.Join(dataDir, entry.Name())
+			launchPath := wallpaperLaunchTarget(wallpaperPath)
+			if launchPath == "" {
+				continue
+			}
+
+			wallpapers = append(wallpapers, loadWallpaper(wallpaperPath, launchPath, entry.Name()))
+		}
 	}
 
 	sort.Slice(wallpapers, func(left, right int) bool {
@@ -470,6 +473,21 @@ func loadWallpapers() []wallpaper {
 	})
 
 	return wallpapers
+}
+
+func wallpaperDirs() []string {
+	dirs := []string{}
+	if userDir := userWallpaperDir(); userDir != "" {
+		dirs = append(dirs, userDir)
+	}
+	return append(dirs, "/usr/share/owui/local", "/usr/local/share/owui/local")
+}
+
+func userWallpaperDir() string {
+	if home, err := os.UserHomeDir(); err == nil {
+		return filepath.Join(home, ".local", "share", "owui", "local")
+	}
+	return ""
 }
 
 func wallpaperLaunchTarget(path string) string {
