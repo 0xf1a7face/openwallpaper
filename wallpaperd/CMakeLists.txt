@@ -119,7 +119,7 @@ if(WD_BUNDLE_WAMRC)
         set(WD_WAMRC_BUILD_DIR "${CMAKE_CURRENT_BINARY_DIR}/wallpaperd-wamrc-build")
         set(WD_WAMRC_BINARY_PATH "${CMAKE_CURRENT_BINARY_DIR}/wallpaperd-wamrc")
         set(WD_WAMRC_LLVM_EXTRA_CMAKE_FLAGS
-            "-DLLVM_ENABLE_ZLIB=OFF -DLLVM_ENABLE_ZSTD=OFF -DLLVM_ENABLE_LIBXML2=OFF")
+            "-DCMAKE_C_COMPILER=${CMAKE_C_COMPILER} -DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER} -DLLVM_ENABLE_ZLIB=OFF -DLLVM_ENABLE_ZSTD=OFF -DLLVM_ENABLE_LIBXML2=OFF")
         set(WD_WAMRC_LLVM_REPOSITORY "https://github.com/llvm/llvm-project.git"
             CACHE STRING "LLVM repository used for statically linked wallpaperd-wamrc")
         set(WD_WAMRC_LLVM_TAG "release/22.x"
@@ -144,7 +144,7 @@ if(WD_BUNDLE_WAMRC)
             BUILD_COMMAND ""
             INSTALL_COMMAND "")
 
-        ExternalProject_Add(wallpaperd-wamrc
+        ExternalProject_Add(wallpaperd-wamrc-build
             SOURCE_DIR "${WAMR_ROOT_DIR}/wamr-compiler"
             BINARY_DIR "${WD_WAMRC_BUILD_DIR}"
             DEPENDS wallpaperd-wamrc-llvm
@@ -163,7 +163,7 @@ if(WD_BUNDLE_WAMRC)
             USES_TERMINAL_CONFIGURE TRUE
             USES_TERMINAL_BUILD TRUE)
 
-        ExternalProject_Add_Step(wallpaperd-wamrc prepare_llvm
+        ExternalProject_Add_Step(wallpaperd-wamrc-build prepare_llvm
             COMMAND "${CMAKE_COMMAND}" -E chdir "${WAMR_ROOT_DIR}/wamr-compiler"
                     ./build_llvm.sh --arch X86 --extra-cmake-flags "${WD_WAMRC_LLVM_EXTRA_CMAKE_FLAGS}"
             BYPRODUCTS "${WD_WAMRC_VENDORED_LLVM_CORE}"
@@ -173,7 +173,7 @@ if(WD_BUNDLE_WAMRC)
 
         message(STATUS "Building bundled wamrc with vendored static LLVM")
         target_compile_definitions(wallpaperd PRIVATE WD_WAMRC_BINARY="wallpaperd-wamrc")
-        add_dependencies(wallpaperd wallpaperd-wamrc)
+        add_dependencies(wallpaperd wallpaperd-wamrc-build)
         install(PROGRAMS "${WD_WAMRC_BINARY_PATH}" DESTINATION ${CMAKE_INSTALL_BINDIR} RENAME wallpaperd-wamrc)
     else()
         if(NOT DEFINED WAMR_BUILD_WITH_CUSTOM_LLVM)
