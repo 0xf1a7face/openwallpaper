@@ -2,15 +2,18 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/diamondburned/gotk4-adwaita/pkg/adw"
@@ -34,6 +37,16 @@ type wallpaperProcess struct {
 	ignored       atomic.Bool
 	logDialogOpen atomic.Bool
 }
+
+type wallpaperEngineProject struct {
+	Title       string `json:"title"`
+	Description string `json:"description"`
+	File        string `json:"file"`
+	Preview     string `json:"preview"`
+	Type        string `json:"type"`
+}
+
+var compileProgressPattern = regexp.MustCompile(`\[(\d+)/(\d+)\]`)
 
 func autorun() {
 	currentSettings := loadSettings()
@@ -304,6 +317,257 @@ func showRendererLogsDialog(parent gtk.Widgetter, process *wallpaperProcess) {
 	dialog.Present(parent)
 }
 
+func importWallpaperEngineScene(parent gtk.Widgetter, wallpaper wallpaper, done func(error)) {
+	output := &processOutput{}
+
+	tempDir, err := createTemporaryImportDir(wallpaper.importDir)
+	if err != nil {
+		fmt.Fprintf(output, "error: create temporary import directory failed: %v\n", err)
+		dialog, _ := rendererLogDialog("Importing scene", output.String())
+		dialog.Present(parent)
+		if done != nil {
+			done(err)
+		}
+		return
+	}
+
+	args := []string{wallpaper.path, tempDir}
+	fmt.Fprintf(output, "> WPE_COMPILE_ASSETS=%s %s\n", quoteCommandArg(wallpaper.assetsDir), commandLine("wpe-compile", args))
+
+	importWindow := importLogDialog(output.String())
+	importWindow.dialog.SetResponseLabel("close", "Abort")
+	closed := atomic.Bool{}
+	aborted := atomic.Bool{}
+	finished := atomic.Bool{}
+	command := exec.Command("wpe-compile", args...)
+	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	command.Env = append(os.Environ(), "WPE_COMPILE_ASSETS="+wallpaper.assetsDir)
+	command.Stdout = output
+	command.Stderr = output
+	text, unsubscribe := output.Subscribe(func(text string) {
+		glib.IdleAdd(func() {
+			if !closed.Load() {
+				importWindow.setOutput(text)
+			}
+		})
+	})
+	importWindow.setOutput(text)
+
+	importWindow.dialog.ConnectResponse(func(response string) {
+		closed.Store(true)
+		unsubscribe()
+		if !finished.Load() {
+			aborted.Store(true)
+			terminateCommand(command)
+		}
+	})
+
+	if err := command.Start(); err != nil {
+		finished.Store(true)
+		_ = os.RemoveAll(tempDir)
+		fmt.Fprintf(output, "error: %v\n", err)
+		importWindow.finish(err, output.String())
+		importWindow.dialog.Present(parent)
+		if done != nil {
+			done(err)
+		}
+		return
+	}
+
+	importWindow.dialog.Present(parent)
+	go func() {
+		err := command.Wait()
+		finished.Store(true)
+
+		if aborted.Load() {
+			err = fmt.Errorf("import aborted")
+		} else if err == nil {
+			err = finishWallpaperEngineImport(tempDir, wallpaper.importDir)
+		}
+
+		if err != nil {
+			_ = os.RemoveAll(tempDir)
+			if !aborted.Load() {
+				if _, ok := exitCode(err); !ok {
+					fmt.Fprintf(output, "error: %v\n", err)
+				}
+			}
+		}
+		output.AppendExitCode(err)
+		glib.IdleAdd(func() {
+			if !closed.Load() {
+				importWindow.finish(err, output.String())
+			}
+			if done != nil {
+				done(err)
+			}
+		})
+	}()
+}
+
+func createTemporaryImportDir(finalDir string) (string, error) {
+	parent := filepath.Dir(finalDir)
+	if err := os.MkdirAll(parent, 0o755); err != nil {
+		return "", err
+	}
+	return os.MkdirTemp(parent, "."+filepath.Base(finalDir)+".tmp-")
+}
+
+func terminateCommand(command *exec.Cmd) {
+	if command == nil || command.Process == nil {
+		return
+	}
+
+	pid := command.Process.Pid
+	if pid <= 0 {
+		return
+	}
+	if err := syscall.Kill(-pid, syscall.SIGTERM); err != nil {
+		_ = command.Process.Signal(syscall.SIGTERM)
+	}
+}
+
+func finishWallpaperEngineImport(tempDir string, finalDir string) error {
+	if wallpaperLaunchTarget(tempDir) == "" {
+		return fmt.Errorf("import output does not contain a supported wallpaper")
+	}
+	return replaceDirectory(finalDir, tempDir)
+}
+
+func replaceDirectory(dst string, src string) error {
+	backup := ""
+	if _, err := os.Stat(dst); err == nil {
+		var backupErr error
+		backup, backupErr = temporarySiblingPath(dst, "old")
+		if backupErr != nil {
+			return backupErr
+		}
+		if err := os.Rename(dst, backup); err != nil {
+			return err
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+
+	if err := os.Rename(src, dst); err != nil {
+		if backup != "" {
+			_ = os.Rename(backup, dst)
+		}
+		return err
+	}
+	if backup != "" {
+		_ = os.RemoveAll(backup)
+	}
+	return nil
+}
+
+func temporarySiblingPath(path string, suffix string) (string, error) {
+	tempPath, err := os.MkdirTemp(filepath.Dir(path), "."+filepath.Base(path)+"."+suffix+"-")
+	if err != nil {
+		return "", err
+	}
+	if err := os.Remove(tempPath); err != nil {
+		return "", err
+	}
+	return tempPath, nil
+}
+
+type importDialog struct {
+	dialog      *adw.AlertDialog
+	textView    *gtk.TextView
+	progressBar *gtk.ProgressBar
+	details     *gtk.Expander
+	progress    float64
+}
+
+func importLogDialog(output string) *importDialog {
+	dialog := adw.NewAlertDialog("Importing scene", "")
+	dialog.AddResponse("close", "Close")
+	dialog.SetDefaultResponse("close")
+	dialog.SetCloseResponse("close")
+
+	progressBar := gtk.NewProgressBar()
+	setImportProgress(progressBar, 0)
+
+	textView := newLogTextView(output)
+
+	details := gtk.NewExpander("Details")
+	details.SetExpanded(false)
+	details.SetResizeToplevel(false)
+	details.SetChild(newLogScrolledWindow(textView))
+	details.NotifyProperty("expanded", func() {
+		if details.Expanded() {
+			scrollLogToEnd(textView)
+		}
+	})
+
+	content := gtk.NewBox(gtk.OrientationVertical, 12)
+	content.SetMarginTop(6)
+	content.SetMarginBottom(6)
+	content.SetMarginStart(6)
+	content.SetMarginEnd(6)
+	content.Append(progressBar)
+	content.Append(details)
+
+	dialog.SetExtraChild(content)
+	return &importDialog{
+		dialog:      dialog,
+		textView:    textView,
+		progressBar: progressBar,
+		details:     details,
+	}
+}
+
+func (dialog *importDialog) setOutput(output string) {
+	setLogText(dialog.textView, output)
+	next := max(dialog.progress, parseCompileProgress(output))
+	if next != dialog.progress {
+		dialog.progress = next
+		setImportProgress(dialog.progressBar, dialog.progress)
+	}
+}
+
+func (dialog *importDialog) finish(err error, output string) {
+	dialog.setOutput(output)
+	if err == nil && dialog.progress < 1 {
+		dialog.progress = 1
+		setImportProgress(dialog.progressBar, dialog.progress)
+	}
+	if err == nil {
+		dialog.dialog.SetHeading("Import successful")
+	} else {
+		dialog.dialog.SetHeading("Import failed")
+	}
+	dialog.dialog.SetResponseLabel("close", "Close")
+	if err != nil {
+		dialog.details.SetExpanded(true)
+	} else if !dialog.details.Expanded() {
+		dialog.dialog.Close()
+	}
+}
+
+func setImportProgress(progressBar *gtk.ProgressBar, fraction float64) {
+	fraction = min(max(fraction, 0), 1)
+	progressBar.SetFraction(fraction)
+}
+
+func parseCompileProgress(output string) float64 {
+	progress := 0.0
+	for _, match := range compileProgressPattern.FindAllStringSubmatch(output, -1) {
+		current, currentErr := strconv.Atoi(match[1])
+		total, totalErr := strconv.Atoi(match[2])
+		if currentErr != nil || totalErr != nil || total <= 0 {
+			continue
+		}
+
+		fraction := float64(current-1) / float64(total)
+		if fraction > progress {
+			progress = fraction
+		}
+	}
+	return min(progress, 1)
+}
+
 func rendererLogDialog(title string, output string) (*adw.AlertDialog, *gtk.TextView) {
 	output = strings.TrimRight(output, "\n")
 	if output == "" {
@@ -315,6 +579,21 @@ func rendererLogDialog(title string, output string) (*adw.AlertDialog, *gtk.Text
 	dialog.SetDefaultResponse("close")
 	dialog.SetCloseResponse("close")
 
+	textView := newLogTextView(output)
+
+	dialog.SetExtraChild(newLogScrolledWindow(textView))
+	return dialog, textView
+}
+
+func newLogScrolledWindow(textView *gtk.TextView) *gtk.ScrolledWindow {
+	scrolled := gtk.NewScrolledWindow()
+	scrolled.SetSizeRequest(640, 320)
+	scrolled.SetPolicy(gtk.PolicyAutomatic, gtk.PolicyAutomatic)
+	scrolled.SetChild(textView)
+	return scrolled
+}
+
+func newLogTextView(output string) *gtk.TextView {
 	textView := gtk.NewTextView()
 	textView.SetEditable(false)
 	textView.SetMonospace(true)
@@ -324,21 +603,73 @@ func rendererLogDialog(title string, output string) (*adw.AlertDialog, *gtk.Text
 	textView.SetLeftMargin(12)
 	textView.SetRightMargin(12)
 	setLogText(textView, output)
-
-	scrolled := gtk.NewScrolledWindow()
-	scrolled.SetSizeRequest(640, 320)
-	scrolled.SetPolicy(gtk.PolicyAutomatic, gtk.PolicyAutomatic)
-	scrolled.SetChild(textView)
-	dialog.SetExtraChild(scrolled)
-	return dialog, textView
+	return textView
 }
 
 func setLogText(textView *gtk.TextView, output string) {
+	output = normalizeLogText(output)
 	output = strings.TrimRight(output, "\n")
 	if output == "" {
 		output = "(no output)"
 	}
-	textView.Buffer().SetText(output)
+	buffer := textView.Buffer()
+	buffer.SetText(output)
+	scrollLogToEnd(textView)
+}
+
+func scrollLogToEnd(textView *gtk.TextView) {
+	glib.IdleAdd(func() {
+		scrollLogAdjustmentToEnd(textView)
+		glib.IdleAdd(func() {
+			scrollLogAdjustmentToEnd(textView)
+		})
+	})
+}
+
+func scrollLogAdjustmentToEnd(textView *gtk.TextView) {
+	adjustment := textView.VAdjustment()
+	if adjustment == nil {
+		return
+	}
+
+	value := adjustment.Upper() - adjustment.PageSize()
+	if value < adjustment.Lower() {
+		value = adjustment.Lower()
+	}
+	adjustment.SetValue(value)
+}
+
+func normalizeLogText(output string) string {
+	input := []rune(output)
+	normalized := make([]rune, 0, len(output))
+	for index := 0; index < len(input); index++ {
+		char := input[index]
+		if char == '\r' {
+			for len(normalized) > 0 && normalized[len(normalized)-1] != '\n' {
+				normalized = normalized[:len(normalized)-1]
+			}
+			continue
+		}
+		if char == '\x1b' {
+			index = skipANSIEscape(input, index)
+			continue
+		}
+		normalized = append(normalized, char)
+	}
+	return string(normalized)
+}
+
+func skipANSIEscape(input []rune, index int) int {
+	if index+1 >= len(input) || input[index+1] != '[' {
+		return index
+	}
+
+	for index += 2; index < len(input); index++ {
+		if input[index] >= 0x40 && input[index] <= 0x7e {
+			return index
+		}
+	}
+	return len(input) - 1
 }
 
 func (output *processOutput) Write(chunk []byte) (int, error) {
@@ -441,32 +772,13 @@ func quoteCommandArg(arg string) string {
 	return arg
 }
 
-func loadWallpapers() []wallpaper {
-	if userDir := userWallpaperDir(); userDir != "" {
-		_ = os.MkdirAll(userDir, 0o755)
+func loadWallpapers(currentSettings settings) []wallpaper {
+	if userDir := userOwuiDir(); userDir != "" {
+		_ = os.MkdirAll(filepath.Join(userDir, "local"), 0o755)
 	}
 
-	wallpapers := []wallpaper{}
-	for _, dataDir := range wallpaperDirs() {
-		entries, err := os.ReadDir(dataDir)
-		if err != nil {
-			continue
-		}
-
-		for _, entry := range entries {
-			if !entry.IsDir() {
-				continue
-			}
-
-			wallpaperPath := filepath.Join(dataDir, entry.Name())
-			launchPath := wallpaperLaunchTarget(wallpaperPath)
-			if launchPath == "" {
-				continue
-			}
-
-			wallpapers = append(wallpapers, loadWallpaper(wallpaperPath, launchPath, entry.Name()))
-		}
-	}
+	wallpapers := loadWallpaperEngineWallpapers(currentSettings)
+	wallpapers = append(wallpapers, loadNativeWallpapers(currentWallpaperEngineImportDirs(wallpapers))...)
 
 	sort.Slice(wallpapers, func(left, right int) bool {
 		return strings.ToLower(wallpapers[left].title) < strings.ToLower(wallpapers[right].title)
@@ -475,17 +787,191 @@ func loadWallpapers() []wallpaper {
 	return wallpapers
 }
 
-func wallpaperDirs() []string {
-	dirs := []string{}
-	if userDir := userWallpaperDir(); userDir != "" {
-		dirs = append(dirs, userDir)
+func currentWallpaperEngineImportDirs(wallpapers []wallpaper) map[string]bool {
+	dirs := map[string]bool{}
+	for _, wallpaper := range wallpapers {
+		if wallpaper.kind == wallpaperEngineScene && wallpaper.importDir != "" {
+			dirs[filepath.Clean(wallpaper.importDir)] = true
+		}
 	}
-	return append(dirs, "/usr/share/owui/local", "/usr/local/share/owui/local")
+	return dirs
 }
 
-func userWallpaperDir() string {
+func loadNativeWallpapers(skipDirs map[string]bool) []wallpaper {
+	wallpapers := []wallpaper{}
+	for _, root := range owuiDirs() {
+		err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+			if err != nil || !entry.IsDir() {
+				return nil
+			}
+			if path != root && strings.HasPrefix(entry.Name(), ".") {
+				return filepath.SkipDir
+			}
+			if skipDirs[filepath.Clean(path)] {
+				return filepath.SkipDir
+			}
+
+			launchPath := wallpaperLaunchTarget(path)
+			if launchPath == "" {
+				return nil
+			}
+
+			wallpapers = append(wallpapers, loadWallpaper(path, launchPath, filepath.Base(path)))
+			return filepath.SkipDir
+		})
+		if err != nil {
+			continue
+		}
+	}
+	return wallpapers
+}
+
+func loadWallpaperEngineWallpapers(currentSettings settings) []wallpaper {
+	steamLibrary := steamLibraryPath(currentSettings)
+	workshopDir := filepath.Join(steamLibrary, "steamapps", "workshop", "content", "431960")
+	assetsDir := wallpaperEngineAssetsDir(steamLibrary)
+	entries, err := os.ReadDir(workshopDir)
+	if err != nil {
+		return nil
+	}
+
+	wallpapers := make([]wallpaper, 0, len(entries))
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+
+		wallpaperPath := filepath.Join(workshopDir, entry.Name())
+		if wallpaper, ok := loadWallpaperEngineWallpaper(wallpaperPath, assetsDir); ok {
+			wallpapers = append(wallpapers, wallpaper)
+		}
+	}
+	return wallpapers
+}
+
+func loadWallpaperEngineWallpaper(path string, assetsDir string) (wallpaper, bool) {
+	project, err := loadWallpaperEngineProject(filepath.Join(path, "project.json"))
+	if err != nil {
+		return wallpaper{}, false
+	}
+
+	workshopID := filepath.Base(path)
+	title := project.Title
+	if strings.TrimSpace(title) == "" {
+		title = workshopID
+	}
+
+	previewPath, _ := inputAssetPath(path, project.Preview)
+
+	switch strings.ToLower(project.Type) {
+	case "scene":
+		return wallpaper{
+			title:       title,
+			description: project.Description,
+			path:        path,
+			previewPath: previewPath,
+			kind:        wallpaperEngineScene,
+			importDir:   wallpaperEngineImportDir(workshopID),
+			assetsDir:   assetsDir,
+		}, true
+	case "video":
+		videoPath, err := inputAssetPath(path, project.File)
+		if err != nil || !isVideoFile(videoPath) {
+			return wallpaper{}, false
+		}
+		return wallpaper{
+			title:       title,
+			description: project.Description,
+			path:        path,
+			launchPath:  videoPath,
+			previewPath: previewPath,
+		}, true
+	default:
+		return wallpaper{}, false
+	}
+}
+
+func loadWallpaperEngineProject(path string) (wallpaperEngineProject, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return wallpaperEngineProject{}, err
+	}
+
+	project := wallpaperEngineProject{}
+	err = json.Unmarshal(data, &project)
+	return project, err
+}
+
+func steamLibraryPath(currentSettings settings) string {
+	if path := strings.TrimSpace(currentSettings.SteamLibraryPath); path != "" {
+		return expandHomePath(path)
+	}
+	return defaultSteamLibraryPath()
+}
+
+func wallpaperEngineAssetsDir(steamLibrary string) string {
+	return filepath.Join(steamLibrary, "steamapps", "common", "wallpaper_engine", "assets")
+}
+
+func defaultSteamLibraryPath() string {
 	if home, err := os.UserHomeDir(); err == nil {
-		return filepath.Join(home, ".local", "share", "owui", "local")
+		return filepath.Join(home, ".local", "share", "Steam")
+	}
+	return filepath.Join(".", "Steam")
+}
+
+func expandHomePath(path string) string {
+	if path == "~" {
+		if home, err := os.UserHomeDir(); err == nil {
+			return home
+		}
+	}
+	if strings.HasPrefix(path, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			return filepath.Join(home, path[2:])
+		}
+	}
+	return path
+}
+
+func wallpaperEngineImportDir(workshopID string) string {
+	if userDir := userOwuiDir(); userDir != "" {
+		return filepath.Join(userDir, "wpe", workshopID)
+	}
+	return filepath.Join(".", "owui", "wpe", workshopID)
+}
+
+func inputAssetPath(root string, name string) (string, error) {
+	if name == "" {
+		return "", fmt.Errorf("empty asset path")
+	}
+	if filepath.IsAbs(name) {
+		return "", fmt.Errorf("asset path %q is absolute", name)
+	}
+
+	clean := filepath.Clean(filepath.FromSlash(name))
+	if clean == "." || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("asset path %q escapes wallpaper directory", name)
+	}
+
+	path := filepath.Join(root, clean)
+	if !regularFileExists(path) {
+		return "", fmt.Errorf("asset path %q is not a regular file", name)
+	}
+	return path, nil
+}
+
+func owuiDirs() []string {
+	dirs := []string{}
+	if userDir := userOwuiDir(); userDir != "" {
+		dirs = append(dirs, userDir)
+	}
+	return append(dirs, "/usr/share/owui", "/usr/local/share/owui")
+}
+
+func userOwuiDir() string {
+	if home, err := os.UserHomeDir(); err == nil {
+		return filepath.Join(home, ".local", "share", "owui")
 	}
 	return ""
 }
@@ -512,7 +998,32 @@ func isSceneFile(path string) bool {
 }
 
 func isVideoFile(path string) bool {
-	return filepath.Base(path) == "video.mp4"
+	return strings.EqualFold(filepath.Ext(path), ".mp4")
+}
+
+func (wallpaper wallpaper) runnableLaunchPath() string {
+	if wallpaper.kind == wallpaperEngineScene {
+		return wallpaper.wallpaperEngineImportedLaunchPath()
+	}
+	return wallpaper.launchPath
+}
+
+func (wallpaper wallpaper) optionsPath() string {
+	if path := wallpaper.runnableLaunchPath(); path != "" {
+		return path
+	}
+	return wallpaper.launchPath
+}
+
+func (wallpaper wallpaper) wallpaperEngineImportedLaunchPath() string {
+	if wallpaper.importDir == "" {
+		return ""
+	}
+	return wallpaperLaunchTarget(wallpaper.importDir)
+}
+
+func (wallpaper wallpaper) importedWallpaperEngineScene() bool {
+	return wallpaper.kind == wallpaperEngineScene && wallpaper.runnableLaunchPath() != ""
 }
 
 func loadWallpaper(path string, launchPath string, fallbackTitle string) wallpaper {

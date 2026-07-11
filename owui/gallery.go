@@ -7,7 +7,7 @@ import (
 	"github.com/diamondburned/gotk4/pkg/pango"
 )
 
-func buildLibraryPane(state *appState, detail detailWidgets) *gtk.Box {
+func buildLibraryPane(state *appState, detail detailWidgets) (*gtk.Box, func()) {
 	pane := gtk.NewBox(gtk.OrientationVertical, 0)
 	pane.SetHExpand(true)
 	pane.SetVExpand(true)
@@ -27,11 +27,49 @@ func buildLibraryPane(state *appState, detail detailWidgets) *gtk.Box {
 	flowBox.SetMinChildrenPerLine(1)
 	flowBox.SetSelectionMode(gtk.SelectionSingle)
 
-	for _, wallpaper := range state.wallpapers {
-		flowBox.Insert(buildWallpaperTile(wallpaper), -1)
+	refreshing := false
+	populate := func(selectedPath string) {
+		refreshing = true
+		defer func() {
+			refreshing = false
+		}()
+
+		flowBox.RemoveAll()
+		for _, wallpaper := range state.wallpapers {
+			flowBox.Insert(buildWallpaperTile(wallpaper), -1)
+		}
+
+		state.selectedIndex = -1
+		selectedIndex := 0
+		if selectedPath != "" {
+			for index, wallpaper := range state.wallpapers {
+				if wallpaper.path == selectedPath {
+					selectedIndex = index
+					break
+				}
+			}
+		}
+
+		if child := flowBox.ChildAtIndex(selectedIndex); child != nil {
+			state.selectedIndex = selectedIndex
+			flowBox.SelectChild(child)
+		}
+		updateDetail(detail, state)
+	}
+	populate("")
+	refreshWallpapers := func() {
+		selectedPath := ""
+		if state.selectedIndex >= 0 && state.selectedIndex < len(state.wallpapers) {
+			selectedPath = state.wallpapers[state.selectedIndex].path
+		}
+		state.wallpapers = loadWallpapers(*state.settings)
+		populate(selectedPath)
 	}
 
 	flowBox.ConnectSelectedChildrenChanged(func() {
+		if refreshing {
+			return
+		}
 		selected := flowBox.SelectedChildren()
 		if len(selected) == 0 {
 			return
@@ -53,10 +91,6 @@ func buildLibraryPane(state *appState, detail detailWidgets) *gtk.Box {
 		runSelectedWallpaper(detail, state)
 	})
 
-	if firstChild := flowBox.ChildAtIndex(0); firstChild != nil {
-		flowBox.SelectChild(firstChild)
-	}
-
 	scrolled := gtk.NewScrolledWindow()
 	scrolled.AddCSSClass("wallpaper-grid")
 	scrolled.SetHExpand(true)
@@ -65,7 +99,7 @@ func buildLibraryPane(state *appState, detail detailWidgets) *gtk.Box {
 	scrolled.SetChild(flowBox)
 	pane.Append(scrolled)
 
-	return pane
+	return pane, refreshWallpapers
 }
 
 func buildWallpaperTile(wallpaper wallpaper) *gtk.Box {
@@ -136,7 +170,7 @@ func setPreviewContent(preview *previewWidget, previewPath string) {
 	}
 
 	if previewPath != "" {
-		if pixbuf, err := gdkpixbuf.NewPixbufFromFile(previewPath); err == nil {
+		if pixbuf, err := loadPreviewPixbuf(previewPath); err == nil && pixbuf != nil {
 			picture := gtk.NewPictureForPaintable(gdk.NewTextureForPixbuf(pixbuf))
 			picture.SetContentFit(gtk.ContentFitCover)
 			picture.SetCanShrink(true)
@@ -153,4 +187,12 @@ func setPreviewContent(preview *previewWidget, previewPath string) {
 	}
 
 	preview.placeholder.SetVisible(preview.picture == nil)
+}
+
+func loadPreviewPixbuf(path string) (*gdkpixbuf.Pixbuf, error) {
+	animation, err := gdkpixbuf.NewPixbufAnimationFromFile(path)
+	if err == nil {
+		return animation.StaticImage(), nil
+	}
+	return gdkpixbuf.NewPixbufFromFile(path)
 }

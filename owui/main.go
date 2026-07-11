@@ -50,7 +50,7 @@ func buildUI(app *adw.Application) {
 
 	state := &appState{
 		settings:        &loadedSettings,
-		wallpapers:      loadWallpapers(),
+		wallpapers:      loadWallpapers(loadedSettings),
 		selectedDisplay: selectedDisplay,
 		processes:       map[int]*wallpaperProcess{},
 	}
@@ -75,7 +75,7 @@ func buildUI(app *adw.Application) {
 		selectedPane.SetVisible(selectedPaneVisible)
 	})
 
-	libraryPane := buildLibraryPane(state, detail)
+	libraryPane, refreshWallpapers := buildLibraryPane(state, detail)
 
 	mainPaned := gtk.NewPaned(gtk.OrientationHorizontal)
 	mainPaned.SetVExpand(true)
@@ -117,12 +117,23 @@ func buildUI(app *adw.Application) {
 	})
 
 	optionsPage := buildOptionsPage(state)
+	currentWallpaperSource := steamLibraryPath(*state.settings)
 
 	pageStack.AddTitledWithIcon(mainPaned, "gallery", "Gallery", bundledIconName("wallpaper"))
 	pageStack.AddTitledWithIcon(optionsPage, "options", "Options", bundledIconName("settings"))
 	pageStack.SetVisibleChildName("gallery")
 	pageStack.NotifyProperty("visible-child-name", func() {
-		controls.setVisible(pageStack.VisibleChildName() == "gallery")
+		galleryVisible := pageStack.VisibleChildName() == "gallery"
+		controls.setVisible(galleryVisible)
+		if !galleryVisible {
+			return
+		}
+
+		nextWallpaperSource := steamLibraryPath(*state.settings)
+		if nextWallpaperSource != currentWallpaperSource {
+			currentWallpaperSource = nextWallpaperSource
+			refreshWallpapers()
+		}
 	})
 
 	root.Append(pageStack)

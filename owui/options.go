@@ -33,6 +33,7 @@ func buildOptionsPage(state *appState) *gtk.ScrolledWindow {
 	addCommonOptions(content, state)
 	addSceneOptions(content, state)
 	addVideoOptions(content, state)
+	addWallpaperEngineOptions(content, state)
 
 	return scrolled
 }
@@ -158,6 +159,22 @@ func addVideoOptions(content *gtk.Box, state *appState) {
 			state.settings.VideoFilter = filterOptions[selected]
 		}
 		saveSettings(*state.settings)
+	})
+
+	content.Append(list)
+}
+
+func addWallpaperEngineOptions(content *gtk.Box, state *appState) {
+	content.Append(sectionLabel("Wallpaper Engine support"))
+
+	list := boxedList()
+
+	steamLibrary := gtk.NewEntry()
+	steamLibrary.SetPlaceholderText(defaultSteamLibraryPath())
+	steamLibrary.SetText(state.settings.SteamLibraryPath)
+	list.Append(entryRow("Steam Library path", steamLibrary))
+	bindEntry(steamLibrary, state, func(s *settings, value string) {
+		s.SteamLibraryPath = strings.TrimSpace(value)
 	})
 
 	content.Append(list)

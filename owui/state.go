@@ -23,6 +23,7 @@ type settings struct {
 	AudioSource        string
 	VideoScaleMode     string
 	VideoFilter        string
+	SteamLibraryPath   string
 	AutorunWallpapers  map[string]string
 	WallpaperOptions   map[string]wallpaperOptions
 }
@@ -58,6 +59,7 @@ type settingsFile struct {
 	AudioSource        string                          `ndl:"audio_source"`
 	VideoScaleMode     string                          `ndl:"video_scale_mode"`
 	VideoFilter        string                          `ndl:"video_filter"`
+	SteamLibraryPath   string                          `ndl:"steam_library_path"`
 	AutorunWallpapers  map[string]string               `ndl:"autorun_wallpapers"`
 	WallpaperOptions   map[string]wallpaperOptionsData `ndl:"wallpaper_options,omitempty"`
 }
@@ -88,12 +90,21 @@ type videoWallpaperOptions struct {
 	Filter    string `ndl:"filter"`
 }
 
+type wallpaperKind int
+
+const (
+	wallpaperEngineScene wallpaperKind = iota + 1
+)
+
 type wallpaper struct {
 	title       string
 	description string
 	path        string
 	launchPath  string
 	previewPath string
+	kind        wallpaperKind
+	importDir   string
+	assetsDir   string
 }
 
 type wallpaperMetadata struct {
@@ -102,14 +113,15 @@ type wallpaperMetadata struct {
 }
 
 type detailWidgets struct {
-	title               *gtk.Label
-	description         *gtk.Label
-	descriptionExpander *gtk.Expander
-	preview             *previewWidget
-	speedSpin           *gtk.SpinButton
-	overrideOptionsRow  *gtk.ListBoxRow
-	selectedRunButton   *gtk.Button
-	selectedRunMenu     *gtk.MenuButton
+	title                *gtk.Label
+	description          *gtk.Label
+	descriptionExpander  *gtk.Expander
+	preview              *previewWidget
+	optionsBox           *gtk.Box
+	speedSpin            *gtk.SpinButton
+	selectedRunButton    *gtk.Button
+	selectedRunMenu      *gtk.MenuButton
+	selectedImportButton *gtk.Button
 }
 
 type previewWidget struct {
@@ -177,6 +189,7 @@ func settingsFromFile(data settingsFile) settings {
 		AudioSource:        data.AudioSource,
 		VideoScaleMode:     data.VideoScaleMode,
 		VideoFilter:        data.VideoFilter,
+		SteamLibraryPath:   data.SteamLibraryPath,
 		AutorunWallpapers:  data.AutorunWallpapers,
 		WallpaperOptions:   wallpaperOptionsFromDataMap(data.WallpaperOptions),
 	}
@@ -225,6 +238,7 @@ func settingsFileFromSettings(currentSettings settings) settingsFile {
 		AudioSource:        currentSettings.AudioSource,
 		VideoScaleMode:     currentSettings.VideoScaleMode,
 		VideoFilter:        currentSettings.VideoFilter,
+		SteamLibraryPath:   currentSettings.SteamLibraryPath,
 		AutorunWallpapers:  currentSettings.AutorunWallpapers,
 		WallpaperOptions:   wallpaperOptionsDataMap(currentSettings.WallpaperOptions),
 	}

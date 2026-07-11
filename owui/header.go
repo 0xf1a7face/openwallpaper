@@ -156,7 +156,7 @@ func sortedDisplayMappings(source map[string]string) []displayMapping {
 
 func wallpaperTitleForPath(state *appState, path string) string {
 	for _, wallpaper := range state.wallpapers {
-		if wallpaper.launchPath == path || wallpaper.path == path {
+		if wallpaper.launchPath == path || wallpaper.path == path || wallpaper.runnableLaunchPath() == path {
 			return wallpaper.title
 		}
 	}

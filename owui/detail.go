@@ -66,7 +66,7 @@ func buildSelectedPane(state *appState, displays []string) (*gtk.Box, detailWidg
 	title.SetXAlign(0.5)
 	body.Append(title)
 
-	selectedRunControls, selectedRunButton, selectedRunMenu := buildSelectedRunControls(state, displays)
+	selectedRunControls, selectedRunButton, selectedRunMenu, selectedImportButton := buildSelectedRunControls(state, displays)
 	body.Append(selectedRunControls)
 
 	description := gtk.NewLabel("")
@@ -85,7 +85,9 @@ func buildSelectedPane(state *appState, displays []string) (*gtk.Box, detailWidg
 	descriptionExpander.SetVisible(false)
 	body.Append(descriptionExpander)
 
-	body.Append(sectionLabel("General options"))
+	optionsBox := gtk.NewBox(gtk.OrientationVertical, 6)
+	optionsBox.SetHExpand(true)
+	optionsBox.Append(sectionLabel("General options"))
 
 	optionsList := boxedList()
 
@@ -102,21 +104,26 @@ func buildSelectedPane(state *appState, displays []string) (*gtk.Box, detailWidg
 	optionsList.Append(overrideOptionsRow)
 
 	optionsList.Append(menuSectionRow("terminal", "Custom commands"))
-	body.Append(optionsList)
+	optionsBox.Append(optionsList)
+	body.Append(optionsBox)
 
 	detail := detailWidgets{
-		title:               title,
-		description:         description,
-		descriptionExpander: descriptionExpander,
-		preview:             largePreview,
-		speedSpin:           speedSpin,
-		overrideOptionsRow:  overrideOptionsRow,
-		selectedRunButton:   selectedRunButton,
-		selectedRunMenu:     selectedRunMenu,
+		title:                title,
+		description:          description,
+		descriptionExpander:  descriptionExpander,
+		preview:              largePreview,
+		optionsBox:           optionsBox,
+		speedSpin:            speedSpin,
+		selectedRunButton:    selectedRunButton,
+		selectedRunMenu:      selectedRunMenu,
+		selectedImportButton: selectedImportButton,
 	}
 	updateDetail(detail, state)
 	detail.selectedRunButton.ConnectClicked(func() {
 		runSelectedWallpaper(detail, state)
+	})
+	detail.selectedImportButton.ConnectClicked(func() {
+		importSelectedWallpaper(detail, state)
 	})
 	detail.speedSpin.ConnectValueChanged(func() {
 		if !state.updatingDetail {
@@ -127,13 +134,17 @@ func buildSelectedPane(state *appState, displays []string) (*gtk.Box, detailWidg
 	return pane, detail
 }
 
-func buildSelectedRunControls(state *appState, displays []string) (*gtk.Box, *gtk.Button, *gtk.MenuButton) {
-	box := gtk.NewBox(gtk.OrientationHorizontal, 0)
-	box.AddCSSClass("linked")
+func buildSelectedRunControls(state *appState, displays []string) (*gtk.Box, *gtk.Button, *gtk.MenuButton, *gtk.Button) {
+	box := gtk.NewBox(gtk.OrientationVertical, 8)
 	box.SetHAlign(gtk.AlignFill)
 	box.SetHExpand(true)
 
-	runButton := gtk.NewButtonWithLabel(runButtonTitle(state.selectedDisplay))
+	runBox := gtk.NewBox(gtk.OrientationHorizontal, 0)
+	runBox.AddCSSClass("linked")
+	runBox.SetHAlign(gtk.AlignFill)
+	runBox.SetHExpand(true)
+
+	runButton := gtk.NewButtonWithLabel(selectedRunButtonTitle(state))
 	runButton.AddCSSClass("suggested-action")
 	runButton.AddCSSClass("pill")
 	runButton.AddCSSClass("selected-run-main")
@@ -162,7 +173,7 @@ func buildSelectedRunControls(state *appState, displays []string) (*gtk.Box, *gt
 			item.SetHAlign(gtk.AlignFill)
 			item.ConnectClicked(func() {
 				state.selectedDisplay = display
-				runButton.SetLabel(runButtonTitle(display))
+				runButton.SetLabel(selectedRunButtonTitle(state))
 				popover.Popdown()
 			})
 			list.Append(item)
@@ -172,9 +183,18 @@ func buildSelectedRunControls(state *appState, displays []string) (*gtk.Box, *gt
 		menuButton.SetPopover(popover)
 	}
 
-	box.Append(runButton)
-	box.Append(menuButton)
-	return box, runButton, menuButton
+	runBox.Append(runButton)
+	runBox.Append(menuButton)
+	box.Append(runBox)
+
+	importButton := gtk.NewButtonWithLabel("Re-import")
+	importButton.AddCSSClass("pill")
+	importButton.SetHExpand(true)
+	importButton.SetTooltipText("Re-import Wallpaper Engine scene")
+	importButton.SetVisible(false)
+	box.Append(importButton)
+
+	return box, runButton, menuButton, importButton
 }
 
 func updateDetail(detail detailWidgets, state *appState) {
@@ -185,7 +205,11 @@ func updateDetail(detail detailWidgets, state *appState) {
 
 	if state.selectedIndex >= 0 && state.selectedIndex < len(state.wallpapers) {
 		wallpaper := state.wallpapers[state.selectedIndex]
-		options := wallpaperOptionsForPath(*state.settings, wallpaper.launchPath)
+		hasOptions := wallpaper.kind != wallpaperEngineScene || wallpaper.importedWallpaperEngineScene()
+		options := defaultWallpaperOptions()
+		if hasOptions {
+			options = wallpaperOptionsForPath(*state.settings, wallpaper.optionsPath())
+		}
 
 		detail.title.SetText(wallpaper.title)
 		detail.description.SetText(wallpaper.description)
@@ -193,7 +217,9 @@ func updateDetail(detail detailWidgets, state *appState) {
 		detail.descriptionExpander.SetExpanded(false)
 		setPreviewContent(detail.preview, wallpaper.previewPath)
 		detail.speedSpin.SetValue(options.Speed)
-		detail.overrideOptionsRow.SetSensitive(true)
+		detail.optionsBox.SetVisible(hasOptions)
+		updateRunButtonTitle(detail, state)
+		detail.selectedImportButton.SetVisible(wallpaper.importedWallpaperEngineScene())
 		setRunButtonsSensitive(detail, !state.working.Load())
 		return
 	}
@@ -204,7 +230,8 @@ func updateDetail(detail detailWidgets, state *appState) {
 	detail.descriptionExpander.SetExpanded(false)
 	setPreviewContent(detail.preview, "")
 	detail.speedSpin.SetValue(defaultWallpaperOptions().Speed)
-	detail.overrideOptionsRow.SetSensitive(false)
+	detail.optionsBox.SetVisible(false)
+	detail.selectedImportButton.SetVisible(false)
 	setRunButtonsSensitive(detail, false)
 }
 
@@ -217,6 +244,16 @@ func runSelectedWallpaper(detail detailWidgets, state *appState) {
 	}
 
 	selectedWallpaper := state.wallpapers[state.selectedIndex]
+	if selectedWallpaper.kind == wallpaperEngineScene && !selectedWallpaper.importedWallpaperEngineScene() {
+		importSelectedWallpaper(detail, state)
+		return
+	}
+
+	launchPath := selectedWallpaper.runnableLaunchPath()
+	if launchPath == "" {
+		return
+	}
+
 	state.working.Store(true)
 	setRunButtonsSensitive(detail, false)
 
@@ -224,19 +261,40 @@ func runSelectedWallpaper(detail detailWidgets, state *appState) {
 	if state.settings.AutorunWallpapers == nil {
 		state.settings.AutorunWallpapers = map[string]string{}
 	}
-	state.settings.AutorunWallpapers[display] = selectedWallpaper.launchPath
+	state.settings.AutorunWallpapers[display] = launchPath
 	saveSettings(*state.settings)
 	state.notifyDisplayMappingsChanged()
 
 	saveSelectedWallpaperOptions(detail, state)
 	settingsSnapshot := cloneSettings(*state.settings)
 	go func() {
-		runWallpaper(state, settingsSnapshot, selectedWallpaper.launchPath, display)
+		runWallpaper(state, settingsSnapshot, launchPath, display)
 		glib.IdleAdd(func() {
 			state.working.Store(false)
 			setRunButtonsSensitive(detail, state.selectedIndex >= 0 && state.selectedIndex < len(state.wallpapers))
 		})
 	}()
+}
+
+func importSelectedWallpaper(detail detailWidgets, state *appState) {
+	if state.working.Load() {
+		return
+	}
+	if state.selectedIndex < 0 || state.selectedIndex >= len(state.wallpapers) || state.dialogParent == nil {
+		return
+	}
+
+	selectedWallpaper := state.wallpapers[state.selectedIndex]
+	if selectedWallpaper.kind != wallpaperEngineScene {
+		return
+	}
+
+	state.working.Store(true)
+	setRunButtonsSensitive(detail, false)
+	importWallpaperEngineScene(state.dialogParent, selectedWallpaper, func(err error) {
+		state.working.Store(false)
+		updateDetail(detail, state)
+	})
 }
 
 func saveSelectedWallpaperOptions(detail detailWidgets, state *appState) {
@@ -245,10 +303,10 @@ func saveSelectedWallpaperOptions(detail detailWidgets, state *appState) {
 	}
 
 	wallpaper := state.wallpapers[state.selectedIndex]
-	options := wallpaperOptionsForPath(*state.settings, wallpaper.launchPath)
+	options := wallpaperOptionsForPath(*state.settings, wallpaper.optionsPath())
 	options.Speed = detail.speedSpin.Value()
 
-	state.settings.setWallpaperOptions(wallpaper.launchPath, options)
+	state.settings.setWallpaperOptions(wallpaper.optionsPath(), options)
 	saveSettings(*state.settings)
 }
 
@@ -258,7 +316,8 @@ func showOverrideOptionsDialog(state *appState) {
 	}
 
 	wallpaper := state.wallpapers[state.selectedIndex]
-	options := wallpaperOptionsForPath(*state.settings, wallpaper.launchPath)
+	optionsPath := wallpaper.optionsPath()
+	options := wallpaperOptionsForPath(*state.settings, optionsPath)
 
 	dialog := adw.NewAlertDialog("Override global options", "")
 	dialog.AddResponse("close", "Close")
@@ -273,7 +332,7 @@ func showOverrideOptionsDialog(state *appState) {
 		if updating {
 			return
 		}
-		state.settings.setWallpaperOptions(wallpaper.launchPath, options)
+		state.settings.setWallpaperOptions(optionsPath, options)
 		saveSettings(*state.settings)
 	}
 	refreshControls := func() {}
@@ -286,7 +345,7 @@ func showOverrideOptionsDialog(state *appState) {
 		refreshControls()
 	}
 
-	if isSceneFile(wallpaper.launchPath) {
+	if isSceneFile(optionsPath) {
 		scene := func() sceneWallpaperOptions {
 			return sceneOptionsWithOverrides(globalSceneOptions(*state.settings), options)
 		}
@@ -404,7 +463,7 @@ func showOverrideOptionsDialog(state *appState) {
 		sourceReset.ConnectClicked(func() {
 			saveAndRefresh(func() { options.AudioSourceOverridden = false })
 		})
-	} else if isVideoFile(wallpaper.launchPath) {
+	} else if isVideoFile(optionsPath) {
 		video := func() videoWallpaperOptions {
 			return videoOptionsWithOverrides(globalVideoOptions(*state.settings), options)
 		}
@@ -503,11 +562,25 @@ func formatSpeed(value float64) string {
 func setRunButtonsSensitive(detail detailWidgets, sensitive bool) {
 	detail.selectedRunButton.SetSensitive(sensitive)
 	detail.selectedRunMenu.SetSensitive(sensitive)
+	detail.selectedImportButton.SetSensitive(sensitive)
 }
 
-func runButtonTitle(display string) string {
-	if strings.TrimSpace(display) == "" {
-		return "Run"
+func updateRunButtonTitle(detail detailWidgets, state *appState) {
+	detail.selectedRunButton.SetLabel(selectedRunButtonTitle(state))
+}
+
+func selectedRunButtonTitle(state *appState) string {
+	prefix := "Run"
+	if state.selectedIndex >= 0 && state.selectedIndex < len(state.wallpapers) {
+		wallpaper := state.wallpapers[state.selectedIndex]
+		if wallpaper.kind == wallpaperEngineScene && !wallpaper.importedWallpaperEngineScene() {
+			return "Import"
+		}
 	}
-	return "Run on " + display
+
+	display := strings.TrimSpace(state.selectedDisplay)
+	if display == "" {
+		return prefix
+	}
+	return prefix + " on " + display
 }
