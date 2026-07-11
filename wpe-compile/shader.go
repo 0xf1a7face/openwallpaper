@@ -7,6 +7,7 @@ import (
 	"maps"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -834,7 +835,8 @@ func runGLSLCPreprocessor(source, includePath string, defines map[string]int) (s
 		return "", errors.New("writing shader failed: " + err.Error())
 	}
 
-	glslcArgs := []string{"-E", tempDir + "/shader.glsl", "-I", includePath}
+	glslcArgs := []string{"-E", tempDir + "/shader.glsl"}
+	glslcArgs = append(glslcArgs, glslcIncludeArgs(includePath)...)
 	for name, value := range defines {
 		glslcArgs = append(glslcArgs, fmt.Sprintf("-D%s=%d", name, value))
 	}
@@ -843,6 +845,20 @@ func runGLSLCPreprocessor(source, includePath string, defines map[string]int) (s
 		return "", fmt.Errorf("glslc preprocessor failed: %s", resultBytes)
 	}
 	return normalizeNewlines(string(resultBytes)), nil
+}
+
+func glslcIncludeArgs(includePaths ...string) []string {
+	includePaths = append(includePaths, filepath.Join(env.Assets, "shaders"))
+
+	args := []string{}
+	for _, includePath := range includePaths {
+		includePath = strings.TrimSpace(includePath)
+		if includePath == "" {
+			continue
+		}
+		args = append(args, "-I", includePath)
+	}
+	return args
 }
 
 func preprocessVertexAttributes(source string) (string, []AttributeInfo) {
