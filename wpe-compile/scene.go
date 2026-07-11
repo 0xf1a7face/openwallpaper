@@ -193,6 +193,7 @@ type objectListObject struct {
 
 type objectListEffect struct {
 	Index  int    `ndl:"index"`
+	ID     string `ndl:"id"`
 	Name   string `ndl:"name"`
 	Passes int    `ndl:"passes"`
 }
@@ -257,6 +258,7 @@ func makeObjectListData() []objectListObject {
 			for effectIndex, effect := range imageObject.Effects {
 				listObject.Effects = append(listObject.Effects, objectListEffect{
 					Index:  effectIndex,
+					ID:     effectID(effect),
 					Name:   effectDisplayName(effect),
 					Passes: len(effect.Passes),
 				})
@@ -286,6 +288,13 @@ func printObjectList() {
 			}
 		}
 	}
+}
+
+func effectID(effect ImageEffect) string {
+	if effect.Path != "" {
+		return effect.Path
+	}
+	return effect.Name
 }
 
 func effectDisplayName(effect ImageEffect) string {
