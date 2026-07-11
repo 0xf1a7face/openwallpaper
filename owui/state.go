@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -46,6 +47,8 @@ type wallpaperOptions struct {
 	ScaleModeOverridden          bool
 	Filter                       string
 	FilterOverridden             bool
+	HiddenObjectIDs              []int
+	HiddenEffects                map[int][]string
 }
 
 type settingsFile struct {
@@ -65,15 +68,22 @@ type settingsFile struct {
 }
 
 type wallpaperOptionsData struct {
-	Speed              *float64 `ndl:"speed,omitempty"`
-	VSync              *bool    `ndl:"vsync,omitempty"`
-	FPSLimit           *int     `ndl:"fps_limit,omitempty"`
-	PreferDiscreteGPU  *bool    `ndl:"prefer_discrete_gpu,omitempty"`
-	AudioVisualization *bool    `ndl:"audio_visualization,omitempty"`
-	AudioBackend       *uint    `ndl:"audio_backend,omitempty"`
-	AudioSource        *string  `ndl:"audio_source,omitempty"`
-	ScaleMode          *string  `ndl:"scale_mode,omitempty"`
-	Filter             *string  `ndl:"filter,omitempty"`
+	Speed              *float64            `ndl:"speed,omitempty"`
+	VSync              *bool               `ndl:"vsync,omitempty"`
+	FPSLimit           *int                `ndl:"fps_limit,omitempty"`
+	PreferDiscreteGPU  *bool               `ndl:"prefer_discrete_gpu,omitempty"`
+	AudioVisualization *bool               `ndl:"audio_visualization,omitempty"`
+	AudioBackend       *uint               `ndl:"audio_backend,omitempty"`
+	AudioSource        *string             `ndl:"audio_source,omitempty"`
+	ScaleMode          *string             `ndl:"scale_mode,omitempty"`
+	Filter             *string             `ndl:"filter,omitempty"`
+	HiddenObjects      []int               `ndl:"hidden_objects,omitempty"`
+	HiddenEffects      []hiddenEffectsData `ndl:"hidden_effects,omitempty"`
+}
+
+type hiddenEffectsData struct {
+	ObjectID int      `ndl:"object_id"`
+	Effects  []string `ndl:"effects"`
 }
 
 type sceneWallpaperOptions struct {
@@ -247,7 +257,7 @@ func settingsFileFromSettings(currentSettings settings) settingsFile {
 func wallpaperOptionsDataMap(source map[string]wallpaperOptions) map[string]wallpaperOptionsData {
 	result := map[string]wallpaperOptionsData{}
 	for path, options := range source {
-		data := wallpaperOptionsDataFromOptions(normalizeWallpaperOptions(options))
+		data := wallpaperOptionsDataFromOptions(options)
 		if wallpaperOptionsDataIsEmpty(data) {
 			continue
 		}
@@ -260,6 +270,7 @@ func wallpaperOptionsDataMap(source map[string]wallpaperOptions) map[string]wall
 }
 
 func wallpaperOptionsDataFromOptions(options wallpaperOptions) wallpaperOptionsData {
+	options = normalizeWallpaperOptions(options)
 	data := wallpaperOptionsData{}
 	if options.Speed != defaultWallpaperOptions().Speed {
 		data.Speed = valuePtr(options.Speed)
@@ -288,11 +299,27 @@ func wallpaperOptionsDataFromOptions(options wallpaperOptions) wallpaperOptionsD
 	if options.FilterOverridden {
 		data.Filter = valuePtr(options.Filter)
 	}
+	if len(options.HiddenObjectIDs) > 0 {
+		data.HiddenObjects = options.HiddenObjectIDs
+	}
+	if len(options.HiddenEffects) > 0 {
+		data.HiddenEffects = hiddenEffectsDataFromMap(options.HiddenEffects)
+	}
 	return data
 }
 
 func wallpaperOptionsDataIsEmpty(data wallpaperOptionsData) bool {
-	return data == wallpaperOptionsData{}
+	return data.Speed == nil &&
+		data.VSync == nil &&
+		data.FPSLimit == nil &&
+		data.PreferDiscreteGPU == nil &&
+		data.AudioVisualization == nil &&
+		data.AudioBackend == nil &&
+		data.AudioSource == nil &&
+		data.ScaleMode == nil &&
+		data.Filter == nil &&
+		len(data.HiddenObjects) == 0 &&
+		len(data.HiddenEffects) == 0
 }
 
 func wallpaperOptionsFromDataMap(source map[string]wallpaperOptionsData) map[string]wallpaperOptions {
@@ -340,6 +367,8 @@ func wallpaperOptionsFromData(data wallpaperOptionsData) wallpaperOptions {
 		options.Filter = *data.Filter
 		options.FilterOverridden = true
 	}
+	options.HiddenObjectIDs = data.HiddenObjects
+	options.HiddenEffects = hiddenEffectsMapFromData(data.HiddenEffects)
 	return normalizeWallpaperOptions(options)
 }
 
@@ -355,7 +384,7 @@ func cloneSettings(source settings) settings {
 	}
 	clone.WallpaperOptions = make(map[string]wallpaperOptions, len(source.WallpaperOptions))
 	for path, options := range source.WallpaperOptions {
-		clone.WallpaperOptions[path] = options
+		clone.WallpaperOptions[path] = cloneWallpaperOptions(options)
 	}
 	return clone
 }
@@ -444,7 +473,110 @@ func normalizeWallpaperOptions(options wallpaperOptions) wallpaperOptions {
 	if options.FilterOverridden {
 		options.Filter = strings.TrimSpace(options.Filter)
 	}
+	options.HiddenObjectIDs = normalizeIntList(options.HiddenObjectIDs)
+	options.HiddenEffects = normalizeHiddenEffects(options.HiddenEffects)
 	return options
+}
+
+func cloneWallpaperOptions(options wallpaperOptions) wallpaperOptions {
+	options.HiddenObjectIDs = append([]int(nil), options.HiddenObjectIDs...)
+	options.HiddenEffects = cloneHiddenEffects(options.HiddenEffects)
+	return options
+}
+
+func cloneHiddenEffects(source map[int][]string) map[int][]string {
+	if len(source) == 0 {
+		return nil
+	}
+	clone := make(map[int][]string, len(source))
+	for objectID, effects := range source {
+		clone[objectID] = append([]string(nil), effects...)
+	}
+	return clone
+}
+
+func hiddenEffectsDataFromMap(source map[int][]string) []hiddenEffectsData {
+	if len(source) == 0 {
+		return nil
+	}
+
+	objectIDs := make([]int, 0, len(source))
+	for objectID := range source {
+		objectIDs = append(objectIDs, objectID)
+	}
+	slices.Sort(objectIDs)
+
+	result := []hiddenEffectsData{}
+	for _, objectID := range objectIDs {
+		effects := normalizeStringList(source[objectID])
+		if len(effects) == 0 {
+			continue
+		}
+		result = append(result, hiddenEffectsData{
+			ObjectID: objectID,
+			Effects:  effects,
+		})
+	}
+	return result
+}
+
+func hiddenEffectsMapFromData(source []hiddenEffectsData) map[int][]string {
+	result := map[int][]string{}
+	for _, entry := range source {
+		effects := normalizeStringList(entry.Effects)
+		if len(effects) == 0 {
+			continue
+		}
+		result[entry.ObjectID] = effects
+	}
+	if len(result) == 0 {
+		return nil
+	}
+	return result
+}
+
+func normalizeHiddenEffects(source map[int][]string) map[int][]string {
+	result := map[int][]string{}
+	for objectID, effects := range source {
+		effects = normalizeStringList(effects)
+		if len(effects) == 0 {
+			continue
+		}
+		result[objectID] = effects
+	}
+	if len(result) == 0 {
+		return nil
+	}
+	return result
+}
+
+func normalizeIntList(values []int) []int {
+	if len(values) == 0 {
+		return nil
+	}
+	values = append([]int(nil), values...)
+	slices.Sort(values)
+	values = slices.Compact(values)
+	return values
+}
+
+func normalizeStringList(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	values = append([]string(nil), values...)
+	for index, value := range values {
+		values[index] = strings.TrimSpace(value)
+	}
+	slices.Sort(values)
+	values = slices.Compact(values)
+	values = slices.DeleteFunc(values, func(value string) bool {
+		return value == ""
+	})
+	if len(values) == 0 {
+		return nil
+	}
+	return values
 }
 
 func globalSceneOptions(currentSettings settings) sceneWallpaperOptions {

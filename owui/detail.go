@@ -267,10 +267,10 @@ func runSelectedWallpaper(detail detailWidgets, state *appState) {
 		return
 	}
 
-	launchPath := selectedWallpaper.runnableLaunchPath()
-	if launchPath == "" {
+	if selectedWallpaper.runnableLaunchPath() == "" {
 		return
 	}
+	settingsPath := selectedWallpaper.optionsPath()
 
 	state.working.Store(true)
 	setRunButtonsSensitive(detail, false)
@@ -279,14 +279,14 @@ func runSelectedWallpaper(detail detailWidgets, state *appState) {
 	if state.settings.AutorunWallpapers == nil {
 		state.settings.AutorunWallpapers = map[string]string{}
 	}
-	state.settings.AutorunWallpapers[display] = launchPath
+	state.settings.AutorunWallpapers[display] = settingsPath
 	saveSettings(*state.settings)
 	state.notifyDisplayMappingsChanged()
 
 	saveSelectedWallpaperOptions(detail, state)
 	settingsSnapshot := cloneSettings(*state.settings)
 	go func() {
-		runWallpaper(state, settingsSnapshot, launchPath, display)
+		runWallpaper(state, settingsSnapshot, settingsPath, display)
 		glib.IdleAdd(func() {
 			state.working.Store(false)
 			setRunButtonsSensitive(detail, state.selectedIndex >= 0 && state.selectedIndex < len(state.wallpapers))
@@ -300,7 +300,16 @@ func importSelectedWallpaper(detail detailWidgets, state *appState) {
 		return
 	}
 
-	importWallpaperEngineScene(state.dialogParent, selectedWallpaper, wallpaperEngineImportOptions{}, func(err error) {
+	settingsPath := selectedWallpaper.optionsPath()
+	importOptions, logText, err := wallpaperEngineImportOptionsFromSavedSettings(selectedWallpaper, wallpaperOptionsForPath(*state.settings, settingsPath))
+	if err != nil {
+		dialog, _ := rendererLogDialog("Import failed", logText)
+		dialog.Present(state.dialogParent)
+		finishSelectedWallpaperImport(detail, state)
+		return
+	}
+
+	importWallpaperEngineScene(state.dialogParent, selectedWallpaper, importOptions, func(err error) {
 		finishSelectedWallpaperImport(detail, state)
 	})
 }
@@ -311,11 +320,13 @@ func importSelectedWallpaperWithOptions(detail detailWidgets, state *appState) {
 		return
 	}
 
-	showWallpaperEngineImportOptions(state.dialogParent, selectedWallpaper, func(options *wallpaperEngineImportOptions) {
+	settingsPath := selectedWallpaper.optionsPath()
+	showWallpaperEngineImportOptions(state.dialogParent, selectedWallpaper, wallpaperOptionsForPath(*state.settings, settingsPath), func(options *wallpaperEngineImportOptions) {
 		if options == nil {
 			finishSelectedWallpaperImport(detail, state)
 			return
 		}
+		saveWallpaperEngineImportOptions(state, selectedWallpaper, *options)
 		importWallpaperEngineScene(state.dialogParent, selectedWallpaper, *options, func(err error) {
 			finishSelectedWallpaperImport(detail, state)
 		})
@@ -343,6 +354,15 @@ func beginSelectedWallpaperImport(detail detailWidgets, state *appState) (wallpa
 func finishSelectedWallpaperImport(detail detailWidgets, state *appState) {
 	state.working.Store(false)
 	updateDetail(detail, state)
+}
+
+func saveWallpaperEngineImportOptions(state *appState, wallpaper wallpaper, importOptions wallpaperEngineImportOptions) {
+	settingsPath := wallpaper.optionsPath()
+	options := wallpaperOptionsForPath(*state.settings, settingsPath)
+	options.HiddenObjectIDs = importOptions.hiddenObjectIDs
+	options.HiddenEffects = importOptions.hiddenEffects
+	state.settings.setWallpaperOptions(settingsPath, options)
+	saveSettings(*state.settings)
 }
 
 func saveSelectedWallpaperOptions(detail detailWidgets, state *appState) {

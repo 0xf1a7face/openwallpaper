@@ -156,13 +156,10 @@ func sortedDisplayMappings(source map[string]string) []displayMapping {
 
 func wallpaperTitleForPath(state *appState, path string) string {
 	for _, wallpaper := range state.wallpapers {
-		if wallpaper.launchPath == path || wallpaper.path == path || wallpaper.runnableLaunchPath() == path {
+		if wallpaper.optionsPath() == path {
 			return wallpaper.title
 		}
 	}
 
-	if base := filepath.Base(path); base == "scene.wasm" || base == "video.mp4" {
-		return filepath.Base(filepath.Dir(path))
-	}
 	return filepath.Base(path)
 }

@@ -57,13 +57,16 @@ type wallpaperEngineObject struct {
 
 type wallpaperEngineEffect struct {
 	Index  int    `ndl:"index"`
+	ID     string `ndl:"id"`
 	Name   string `ndl:"name"`
 	Passes int    `ndl:"passes"`
 }
 
 type wallpaperEngineImportOptions struct {
-	skipObjects string
-	skipEffects string
+	skipObjects     string
+	skipEffects     string
+	hiddenObjectIDs []int
+	hiddenEffects   map[int][]string
 }
 
 type importEffectControl struct {
@@ -97,7 +100,7 @@ func runWallpaper(state *appState, currentSettings settings, path string, displa
 	}
 
 	oldPIDs := getRunningPids(display)
-	args := wallpaperdArgs(currentSettings, launchPath, display)
+	args := wallpaperdArgs(currentSettings, launchPath, path, display)
 
 	output := &processOutput{}
 	fmt.Fprintf(output, "> %s\n", commandLine("wallpaperd", args))
@@ -113,7 +116,7 @@ func runWallpaper(state *appState, currentSettings settings, path string, displa
 	process := &wallpaperProcess{
 		pid:     child.Process.Pid,
 		display: display,
-		path:    launchPath,
+		path:    path,
 		output:  output,
 	}
 	if state != nil {
@@ -164,12 +167,12 @@ func stopWallpaper(state *appState, display string) {
 	}
 }
 
-func wallpaperdArgs(currentSettings settings, path string, display string) []string {
+func wallpaperdArgs(currentSettings settings, launchPath string, settingsPath string, display string) []string {
 	args := []string{
 		"--owui-tag",
 		fmt.Sprintf("--display=%s", display),
 	}
-	options := wallpaperOptionsForPath(currentSettings, path)
+	options := wallpaperOptionsForPath(currentSettings, settingsPath)
 
 	if currentSettings.PauseHidden {
 		args = append(args, "--pause-hidden")
@@ -181,8 +184,8 @@ func wallpaperdArgs(currentSettings settings, path string, display string) []str
 		args = append(args, fmt.Sprintf("--speed=%s", formatSpeed(options.Speed)))
 	}
 
-	if isSceneFile(path) {
-		sceneOptions := sceneOptionsForPath(currentSettings, path)
+	if isSceneFile(launchPath) {
+		sceneOptions := sceneOptionsForPath(currentSettings, settingsPath)
 		if !sceneOptions.VSync {
 			args = append(args, fmt.Sprintf("--fps=%d", sceneOptions.FPSLimit))
 		}
@@ -206,8 +209,8 @@ func wallpaperdArgs(currentSettings settings, path string, display string) []str
 		}
 	}
 
-	if isVideoFile(path) {
-		videoOptions := videoOptionsForPath(currentSettings, path)
+	if isVideoFile(launchPath) {
+		videoOptions := videoOptionsForPath(currentSettings, settingsPath)
 		scaleMode := normalizedScaleMode(videoOptions.ScaleMode)
 		if scaleMode != "aspect-crop" {
 			args = append(args, fmt.Sprintf("--scale-mode=%s", scaleMode))
@@ -217,7 +220,7 @@ func wallpaperdArgs(currentSettings settings, path string, display string) []str
 		}
 	}
 
-	args = append(args, path)
+	args = append(args, launchPath)
 	return args
 }
 
@@ -349,7 +352,7 @@ func showRendererLogsDialog(parent gtk.Widgetter, process *wallpaperProcess) {
 	dialog.Present(parent)
 }
 
-func showWallpaperEngineImportOptions(parent gtk.Widgetter, wallpaper wallpaper, done func(*wallpaperEngineImportOptions)) {
+func showWallpaperEngineImportOptions(parent gtk.Widgetter, wallpaper wallpaper, savedOptions wallpaperOptions, done func(*wallpaperEngineImportOptions)) {
 	go func() {
 		objects, logText, err := loadWallpaperEngineObjects(wallpaper)
 		glib.IdleAdd(func() {
@@ -359,7 +362,7 @@ func showWallpaperEngineImportOptions(parent gtk.Widgetter, wallpaper wallpaper,
 				done(nil)
 				return
 			}
-			presentWallpaperEngineImportOptions(parent, objects, done)
+			presentWallpaperEngineImportOptions(parent, objects, savedOptions, done)
 		})
 	}()
 }
@@ -386,7 +389,7 @@ func loadWallpaperEngineObjects(wallpaper wallpaper) ([]wallpaperEngineObject, s
 	return objects, output.String(), nil
 }
 
-func presentWallpaperEngineImportOptions(parent gtk.Widgetter, objects []wallpaperEngineObject, done func(*wallpaperEngineImportOptions)) {
+func presentWallpaperEngineImportOptions(parent gtk.Widgetter, objects []wallpaperEngineObject, savedOptions wallpaperOptions, done func(*wallpaperEngineImportOptions)) {
 	dialog := adw.NewAlertDialog("Select objects and effects", "")
 	dialog.AddResponse("cancel", "Cancel")
 	dialog.AddResponse("import", "Import")
@@ -395,7 +398,7 @@ func presentWallpaperEngineImportOptions(parent gtk.Widgetter, objects []wallpap
 	dialog.SetResponseAppearance("import", adw.ResponseSuggested)
 	dialog.SetPreferWideLayout(true)
 
-	list, roots := importOptionsList(objects)
+	list, roots := importOptionsList(objects, savedOptions)
 	dialog.SetExtraChild(list)
 	dialog.ConnectResponse(func(response string) {
 		if response != "import" {
@@ -408,15 +411,18 @@ func presentWallpaperEngineImportOptions(parent gtk.Widgetter, objects []wallpap
 	dialog.Present(parent)
 }
 
-func importOptionsList(objects []wallpaperEngineObject) (gtk.Widgetter, []*importObjectNode) {
+func importOptionsList(objects []wallpaperEngineObject, savedOptions wallpaperOptions) (gtk.Widgetter, []*importObjectNode) {
 	list := boxedList()
 	list.SetSizeRequest(520, -1)
 
 	roots := importObjectTree(objects)
+	hiddenObjectIDs := intSet(savedOptions.HiddenObjectIDs)
+	hiddenEffects := savedOptions.HiddenEffects
 	for _, root := range roots {
-		appendImportObjectRows(list, root, 0)
+		appendImportObjectRows(list, root, 0, hiddenObjectIDs, hiddenEffects)
 	}
 	connectImportObjectToggles(roots)
+	updateImportObjectSensitivity(roots)
 
 	if len(objects) == 0 {
 		label := gtk.NewLabel("No objects")
@@ -455,15 +461,16 @@ func importObjectTree(objects []wallpaperEngineObject) []*importObjectNode {
 	return roots
 }
 
-func appendImportObjectRows(list *gtk.ListBox, node *importObjectNode, indent int) {
+func appendImportObjectRows(list *gtk.ListBox, node *importObjectNode, indent int, hiddenObjectIDs map[int]bool, hiddenEffects map[int][]string) {
 	objectCheck := gtk.NewCheckButton()
-	objectCheck.SetActive(true)
+	objectCheck.SetActive(!hiddenObjectIDs[node.object.ID])
 	node.check = objectCheck
 	list.Append(importCheckRow(objectCheck, objectLabel(node.object), indent))
 
+	hiddenEffectIDs := stringSet(hiddenEffects[node.object.ID])
 	for _, effect := range node.object.Effects {
 		effectCheck := gtk.NewCheckButton()
-		effectCheck.SetActive(true)
+		effectCheck.SetActive(!hiddenEffectIDs[wallpaperEngineEffectID(effect)])
 		node.effects = append(node.effects, importEffectControl{
 			effect: effect,
 			check:  effectCheck,
@@ -472,7 +479,7 @@ func appendImportObjectRows(list *gtk.ListBox, node *importObjectNode, indent in
 	}
 
 	for _, child := range node.children {
-		appendImportObjectRows(list, child, indent+32)
+		appendImportObjectRows(list, child, indent+32, hiddenObjectIDs, hiddenEffects)
 	}
 }
 
@@ -540,21 +547,26 @@ func effectLabel(effect wallpaperEngineEffect) string {
 func importOptionsFromTree(roots []*importObjectNode) wallpaperEngineImportOptions {
 	skippedObjects := []string{}
 	effectRules := []string{}
+	hiddenObjectIDs := []int{}
+	hiddenEffects := map[int][]string{}
 	for _, root := range roots {
-		appendImportOptionsFromNode(root, true, &skippedObjects, &effectRules)
+		appendImportOptionsFromNode(root, true, &skippedObjects, &effectRules, &hiddenObjectIDs, hiddenEffects)
 	}
 
 	return wallpaperEngineImportOptions{
-		skipObjects: strings.Join(skippedObjects, ","),
-		skipEffects: strings.Join(effectRules, ";"),
+		skipObjects:     strings.Join(skippedObjects, ","),
+		skipEffects:     strings.Join(effectRules, ";"),
+		hiddenObjectIDs: normalizeIntList(hiddenObjectIDs),
+		hiddenEffects:   normalizeHiddenEffects(hiddenEffects),
 	}
 }
 
-func appendImportOptionsFromNode(node *importObjectNode, parentActive bool, skippedObjects *[]string, effectRules *[]string) {
+func appendImportOptionsFromNode(node *importObjectNode, parentActive bool, skippedObjects *[]string, effectRules *[]string, hiddenObjectIDs *[]int, hiddenEffects map[int][]string) {
 	active := parentActive && node.check.Active()
 	if !active {
 		if parentActive {
 			*skippedObjects = append(*skippedObjects, strconv.Itoa(node.object.Index))
+			*hiddenObjectIDs = append(*hiddenObjectIDs, node.object.ID)
 		}
 		return
 	}
@@ -563,6 +575,7 @@ func appendImportOptionsFromNode(node *importObjectNode, parentActive bool, skip
 	for _, effectControl := range node.effects {
 		if !effectControl.check.Active() {
 			skippedEffects = append(skippedEffects, strconv.Itoa(effectControl.effect.Index))
+			hiddenEffects[node.object.ID] = append(hiddenEffects[node.object.ID], wallpaperEngineEffectID(effectControl.effect))
 		}
 	}
 	if len(skippedEffects) > 0 {
@@ -570,8 +583,78 @@ func appendImportOptionsFromNode(node *importObjectNode, parentActive bool, skip
 	}
 
 	for _, child := range node.children {
-		appendImportOptionsFromNode(child, active, skippedObjects, effectRules)
+		appendImportOptionsFromNode(child, active, skippedObjects, effectRules, hiddenObjectIDs, hiddenEffects)
 	}
+}
+
+func wallpaperEngineImportOptionsFromSavedSettings(wallpaper wallpaper, savedOptions wallpaperOptions) (wallpaperEngineImportOptions, string, error) {
+	if len(savedOptions.HiddenObjectIDs) == 0 && len(savedOptions.HiddenEffects) == 0 {
+		return wallpaperEngineImportOptions{}, "", nil
+	}
+
+	objects, logText, err := loadWallpaperEngineObjects(wallpaper)
+	if err != nil {
+		return wallpaperEngineImportOptions{}, logText, err
+	}
+	return importOptionsFromSavedSettings(objects, savedOptions), "", nil
+}
+
+func importOptionsFromSavedSettings(objects []wallpaperEngineObject, savedOptions wallpaperOptions) wallpaperEngineImportOptions {
+	hiddenObjectIDs := intSet(savedOptions.HiddenObjectIDs)
+	hiddenEffects := savedOptions.HiddenEffects
+	skippedObjects := []string{}
+	effectRules := []string{}
+
+	for _, object := range objects {
+		if hiddenObjectIDs[object.ID] {
+			skippedObjects = append(skippedObjects, strconv.Itoa(object.Index))
+			continue
+		}
+
+		hiddenEffectIDs := stringSet(hiddenEffects[object.ID])
+		skippedEffects := []string{}
+		for _, effect := range object.Effects {
+			if hiddenEffectIDs[wallpaperEngineEffectID(effect)] {
+				skippedEffects = append(skippedEffects, strconv.Itoa(effect.Index))
+			}
+		}
+		if len(skippedEffects) > 0 {
+			effectRules = append(effectRules, fmt.Sprintf("%d:%s", object.Index, strings.Join(skippedEffects, ",")))
+		}
+	}
+
+	return wallpaperEngineImportOptions{
+		skipObjects:     strings.Join(skippedObjects, ","),
+		skipEffects:     strings.Join(effectRules, ";"),
+		hiddenObjectIDs: savedOptions.HiddenObjectIDs,
+		hiddenEffects:   savedOptions.HiddenEffects,
+	}
+}
+
+func intSet(values []int) map[int]bool {
+	set := map[int]bool{}
+	for _, value := range values {
+		set[value] = true
+	}
+	return set
+}
+
+func stringSet(values []string) map[string]bool {
+	set := map[string]bool{}
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			set[value] = true
+		}
+	}
+	return set
+}
+
+func wallpaperEngineEffectID(effect wallpaperEngineEffect) string {
+	if id := strings.TrimSpace(effect.ID); id != "" {
+		return id
+	}
+	return strconv.Itoa(effect.Index)
 }
 
 func importWallpaperEngineScene(parent gtk.Widgetter, wallpaper wallpaper, options wallpaperEngineImportOptions, done func(error)) {
@@ -1245,10 +1328,6 @@ func userOwuiDir() string {
 }
 
 func wallpaperLaunchTarget(path string) string {
-	if regularFileExists(path) && (isSceneFile(path) || isVideoFile(path)) {
-		return path
-	}
-
 	scenePath := filepath.Join(path, "scene.wasm")
 	if regularFileExists(scenePath) {
 		return scenePath
@@ -1257,6 +1336,11 @@ func wallpaperLaunchTarget(path string) string {
 	videoPath := filepath.Join(path, "video.mp4")
 	if regularFileExists(videoPath) {
 		return videoPath
+	}
+	if project, err := loadWallpaperEngineProject(filepath.Join(path, "project.json")); err == nil && strings.EqualFold(project.Type, "video") {
+		if videoPath, err := inputAssetPath(path, project.File); err == nil && isVideoFile(videoPath) {
+			return videoPath
+		}
 	}
 	return ""
 }
@@ -1277,10 +1361,16 @@ func (wallpaper wallpaper) runnableLaunchPath() string {
 }
 
 func (wallpaper wallpaper) optionsPath() string {
-	if path := wallpaper.runnableLaunchPath(); path != "" {
-		return path
+	if wallpaper.kind == wallpaperEngineScene && wallpaper.importDir != "" {
+		return wallpaper.importDir
 	}
-	return wallpaper.launchPath
+	if wallpaper.path != "" {
+		return wallpaper.path
+	}
+	if wallpaper.launchPath != "" {
+		return filepath.Dir(wallpaper.launchPath)
+	}
+	return ""
 }
 
 func (wallpaper wallpaper) wallpaperEngineImportedLaunchPath() string {
