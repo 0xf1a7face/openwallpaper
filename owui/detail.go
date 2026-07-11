@@ -2,7 +2,6 @@ package main
 
 import (
 	"strconv"
-	"strings"
 
 	"github.com/diamondburned/gotk4-adwaita/pkg/adw"
 	"github.com/diamondburned/gotk4/pkg/gdk/v4"
@@ -267,7 +266,8 @@ func runSelectedWallpaper(detail detailWidgets, state *appState) {
 		return
 	}
 
-	if selectedWallpaper.runnableLaunchPath() == "" {
+	launchPath := selectedWallpaper.runnableLaunchPath()
+	if launchPath == "" {
 		return
 	}
 	settingsPath := selectedWallpaper.optionsPath()
@@ -284,9 +284,9 @@ func runSelectedWallpaper(detail detailWidgets, state *appState) {
 	state.notifyDisplayMappingsChanged()
 
 	saveSelectedWallpaperOptions(detail, state)
-	settingsSnapshot := cloneSettings(*state.settings)
+	args := wallpaperdArgs(*state.settings, launchPath, settingsPath, display)
 	go func() {
-		runWallpaper(state, settingsSnapshot, settingsPath, display)
+		runWallpaperWithArgs(state, settingsPath, display, args)
 		glib.IdleAdd(func() {
 			state.working.Store(false)
 			setRunButtonsSensitive(detail, state.selectedIndex >= 0 && state.selectedIndex < len(state.wallpapers))
@@ -605,7 +605,6 @@ func overrideWidgetRow(labelText string, resetButton *gtk.Button, widget gtk.Wid
 
 func overrideFilterOptions(current string) []string {
 	filters := loadMPVScaleFilters()
-	current = strings.TrimSpace(current)
 	if current != "" && indexOfString(filters, current) < 0 {
 		filters = append([]string{current}, filters...)
 	}
@@ -613,7 +612,7 @@ func overrideFilterOptions(current string) []string {
 }
 
 func filterOptionIndex(options []string, filter string) uint {
-	if strings.TrimSpace(filter) == "" {
+	if filter == "" {
 		return 0
 	}
 	index := indexOfString(options, filter)
@@ -654,9 +653,8 @@ func selectedRunButtonTitle(state *appState) string {
 		}
 	}
 
-	display := strings.TrimSpace(state.selectedDisplay)
-	if display == "" {
+	if state.selectedDisplay == "" {
 		return prefix
 	}
-	return prefix + " on " + display
+	return prefix + " on " + state.selectedDisplay
 }

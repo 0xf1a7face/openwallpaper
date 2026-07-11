@@ -174,7 +174,7 @@ func addWallpaperEngineOptions(content *gtk.Box, state *appState) {
 	steamLibrary.SetText(state.settings.SteamLibraryPath)
 	list.Append(entryRow("Steam Library path", steamLibrary))
 	bindEntry(steamLibrary, state, func(s *settings, value string) {
-		s.SteamLibraryPath = strings.TrimSpace(value)
+		s.SteamLibraryPath = value
 	})
 
 	content.Append(list)

@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -212,7 +211,6 @@ func settingsFromFile(data settingsFile) settings {
 	currentSettings.FPSLimit = normalizedFPSLimit(currentSettings.FPSLimit)
 	currentSettings.AudioBackend = min(currentSettings.AudioBackend, 3)
 	currentSettings.VideoScaleMode = normalizedScaleMode(currentSettings.VideoScaleMode)
-	currentSettings.VideoFilter = strings.TrimSpace(currentSettings.VideoFilter)
 	for path, options := range currentSettings.WallpaperOptions {
 		currentSettings.WallpaperOptions[path] = normalizeWallpaperOptions(options)
 	}
@@ -376,19 +374,6 @@ func valuePtr[T any](value T) *T {
 	return &value
 }
 
-func cloneSettings(source settings) settings {
-	clone := source
-	clone.AutorunWallpapers = make(map[string]string, len(source.AutorunWallpapers))
-	for display, path := range source.AutorunWallpapers {
-		clone.AutorunWallpapers[display] = path
-	}
-	clone.WallpaperOptions = make(map[string]wallpaperOptions, len(source.WallpaperOptions))
-	for path, options := range source.WallpaperOptions {
-		clone.WallpaperOptions[path] = cloneWallpaperOptions(options)
-	}
-	return clone
-}
-
 func sceneOptionsForPath(currentSettings settings, path string) sceneWallpaperOptions {
 	scene := globalSceneOptions(currentSettings)
 	options := wallpaperOptionsForPath(currentSettings, path)
@@ -428,7 +413,7 @@ func videoOptionsWithOverrides(video videoWallpaperOptions, options wallpaperOpt
 		video.ScaleMode = normalizedScaleMode(options.ScaleMode)
 	}
 	if options.FilterOverridden {
-		video.Filter = strings.TrimSpace(options.Filter)
+		video.Filter = options.Filter
 	}
 	return video
 }
@@ -470,29 +455,9 @@ func normalizeWallpaperOptions(options wallpaperOptions) wallpaperOptions {
 	if options.ScaleModeOverridden {
 		options.ScaleMode = normalizedScaleMode(options.ScaleMode)
 	}
-	if options.FilterOverridden {
-		options.Filter = strings.TrimSpace(options.Filter)
-	}
 	options.HiddenObjectIDs = normalizeIntList(options.HiddenObjectIDs)
 	options.HiddenEffects = normalizeHiddenEffects(options.HiddenEffects)
 	return options
-}
-
-func cloneWallpaperOptions(options wallpaperOptions) wallpaperOptions {
-	options.HiddenObjectIDs = append([]int(nil), options.HiddenObjectIDs...)
-	options.HiddenEffects = cloneHiddenEffects(options.HiddenEffects)
-	return options
-}
-
-func cloneHiddenEffects(source map[int][]string) map[int][]string {
-	if len(source) == 0 {
-		return nil
-	}
-	clone := make(map[int][]string, len(source))
-	for objectID, effects := range source {
-		clone[objectID] = append([]string(nil), effects...)
-	}
-	return clone
 }
 
 func hiddenEffectsDataFromMap(source map[int][]string) []hiddenEffectsData {
@@ -565,9 +530,6 @@ func normalizeStringList(values []string) []string {
 		return nil
 	}
 	values = append([]string(nil), values...)
-	for index, value := range values {
-		values[index] = strings.TrimSpace(value)
-	}
 	slices.Sort(values)
 	values = slices.Compact(values)
 	values = slices.DeleteFunc(values, func(value string) bool {
@@ -593,7 +555,7 @@ func globalSceneOptions(currentSettings settings) sceneWallpaperOptions {
 func globalVideoOptions(currentSettings settings) videoWallpaperOptions {
 	return videoWallpaperOptions{
 		ScaleMode: normalizedScaleMode(currentSettings.VideoScaleMode),
-		Filter:    strings.TrimSpace(currentSettings.VideoFilter),
+		Filter:    currentSettings.VideoFilter,
 	}
 }
 

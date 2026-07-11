@@ -99,8 +99,11 @@ func runWallpaper(state *appState, currentSettings settings, path string, displa
 		return
 	}
 
+	runWallpaperWithArgs(state, path, display, wallpaperdArgs(currentSettings, launchPath, path, display))
+}
+
+func runWallpaperWithArgs(state *appState, path string, display string, args []string) {
 	oldPIDs := getRunningPids(display)
-	args := wallpaperdArgs(currentSettings, launchPath, path, display)
 
 	output := &processOutput{}
 	fmt.Fprintf(output, "> %s\n", commandLine("wallpaperd", args))
@@ -203,7 +206,7 @@ func wallpaperdArgs(currentSettings settings, launchPath string, settingsPath st
 			case 3:
 				args = append(args, "--audio-backend=portaudio")
 			}
-			if strings.TrimSpace(sceneOptions.AudioSource) != "" {
+			if sceneOptions.AudioSource != "" {
 				args = append(args, fmt.Sprintf("--audio-source=%s", sceneOptions.AudioSource))
 			}
 		}
@@ -215,7 +218,7 @@ func wallpaperdArgs(currentSettings settings, launchPath string, settingsPath st
 		if scaleMode != "aspect-crop" {
 			args = append(args, fmt.Sprintf("--scale-mode=%s", scaleMode))
 		}
-		if strings.TrimSpace(videoOptions.Filter) != "" {
+		if videoOptions.Filter != "" {
 			args = append(args, fmt.Sprintf("--filter=%s", videoOptions.Filter))
 		}
 	}
@@ -529,7 +532,7 @@ func importCheckRow(check *gtk.CheckButton, labelText string, indent int) *gtk.L
 }
 
 func objectLabel(object wallpaperEngineObject) string {
-	name := strings.TrimSpace(object.Name)
+	name := object.Name
 	if name == "" {
 		name = "(unnamed)"
 	}
@@ -537,7 +540,7 @@ func objectLabel(object wallpaperEngineObject) string {
 }
 
 func effectLabel(effect wallpaperEngineEffect) string {
-	name := strings.TrimSpace(effect.Name)
+	name := effect.Name
 	if name == "" {
 		name = "(unnamed)"
 	}
@@ -642,7 +645,6 @@ func intSet(values []int) map[int]bool {
 func stringSet(values []string) map[string]bool {
 	set := map[string]bool{}
 	for _, value := range values {
-		value = strings.TrimSpace(value)
 		if value != "" {
 			set[value] = true
 		}
@@ -651,8 +653,8 @@ func stringSet(values []string) map[string]bool {
 }
 
 func wallpaperEngineEffectID(effect wallpaperEngineEffect) string {
-	if id := strings.TrimSpace(effect.ID); id != "" {
-		return id
+	if effect.ID != "" {
+		return effect.ID
 	}
 	return strconv.Itoa(effect.Index)
 }
@@ -920,11 +922,6 @@ func parseCompileProgress(output string) float64 {
 }
 
 func rendererLogDialog(title string, output string) (*adw.AlertDialog, *gtk.TextView) {
-	output = strings.TrimRight(output, "\n")
-	if output == "" {
-		output = "(no output)"
-	}
-
 	dialog := adw.NewAlertDialog(title, "")
 	dialog.AddResponse("close", "Close")
 	dialog.SetDefaultResponse("close")
@@ -1208,7 +1205,7 @@ func loadWallpaperEngineWallpaper(path string, assetsDir string) (wallpaper, boo
 
 	workshopID := filepath.Base(path)
 	title := project.Title
-	if strings.TrimSpace(title) == "" {
+	if title == "" {
 		title = workshopID
 	}
 
@@ -1254,8 +1251,8 @@ func loadWallpaperEngineProject(path string) (wallpaperEngineProject, error) {
 }
 
 func steamLibraryPath(currentSettings settings) string {
-	if path := strings.TrimSpace(currentSettings.SteamLibraryPath); path != "" {
-		return expandHomePath(path)
+	if currentSettings.SteamLibraryPath != "" {
+		return expandHomePath(currentSettings.SteamLibraryPath)
 	}
 	return defaultSteamLibraryPath()
 }
@@ -1410,7 +1407,7 @@ func loadWallpaperMetadata(path string, fallbackTitle string) (string, string) {
 		return title, description
 	}
 
-	if strings.TrimSpace(metadata.Title) != "" {
+	if metadata.Title != "" {
 		title = metadata.Title
 	}
 	description = metadata.Description
@@ -1444,7 +1441,6 @@ func nonEmptyLines(output []byte) []string {
 	lines := strings.Split(string(output), "\n")
 	result := make([]string, 0, len(lines))
 	for _, line := range lines {
-		line = strings.TrimSpace(line)
 		if line != "" {
 			result = append(result, line)
 		}
