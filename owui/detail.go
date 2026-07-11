@@ -66,8 +66,8 @@ func buildSelectedPane(state *appState, displays []string) (*gtk.Box, detailWidg
 	title.SetXAlign(0.5)
 	body.Append(title)
 
-	selectedRunControls, selectedRunButton, selectedRunMenu, selectedImportButton := buildSelectedRunControls(state, displays)
-	body.Append(selectedRunControls)
+	runControls := buildSelectedRunControls(state, displays)
+	body.Append(runControls.box)
 
 	description := gtk.NewLabel("")
 	description.SetWrap(true)
@@ -108,22 +108,22 @@ func buildSelectedPane(state *appState, displays []string) (*gtk.Box, detailWidg
 	body.Append(optionsBox)
 
 	detail := detailWidgets{
-		title:                title,
-		description:          description,
-		descriptionExpander:  descriptionExpander,
-		preview:              largePreview,
-		optionsBox:           optionsBox,
-		speedSpin:            speedSpin,
-		selectedRunButton:    selectedRunButton,
-		selectedRunMenu:      selectedRunMenu,
-		selectedImportButton: selectedImportButton,
+		title:                        title,
+		description:                  description,
+		descriptionExpander:          descriptionExpander,
+		preview:                      largePreview,
+		optionsBox:                   optionsBox,
+		speedSpin:                    speedSpin,
+		selectedRunButton:            runControls.runButton,
+		selectedRunMenu:              runControls.runMenu,
+		selectedAdvancedImportButton: runControls.advancedImportButton,
 	}
 	updateDetail(detail, state)
 	detail.selectedRunButton.ConnectClicked(func() {
 		runSelectedWallpaper(detail, state)
 	})
-	detail.selectedImportButton.ConnectClicked(func() {
-		importSelectedWallpaper(detail, state)
+	detail.selectedAdvancedImportButton.ConnectClicked(func() {
+		importSelectedWallpaperWithOptions(detail, state)
 	})
 	detail.speedSpin.ConnectValueChanged(func() {
 		if !state.updatingDetail {
@@ -134,7 +134,14 @@ func buildSelectedPane(state *appState, displays []string) (*gtk.Box, detailWidg
 	return pane, detail
 }
 
-func buildSelectedRunControls(state *appState, displays []string) (*gtk.Box, *gtk.Button, *gtk.MenuButton, *gtk.Button) {
+type selectedRunControls struct {
+	box                  *gtk.Box
+	runButton            *gtk.Button
+	runMenu              *gtk.MenuButton
+	advancedImportButton *gtk.Button
+}
+
+func buildSelectedRunControls(state *appState, displays []string) selectedRunControls {
 	box := gtk.NewBox(gtk.OrientationVertical, 8)
 	box.SetHAlign(gtk.AlignFill)
 	box.SetHExpand(true)
@@ -147,7 +154,6 @@ func buildSelectedRunControls(state *appState, displays []string) (*gtk.Box, *gt
 	runButton := gtk.NewButtonWithLabel(selectedRunButtonTitle(state))
 	runButton.AddCSSClass("suggested-action")
 	runButton.AddCSSClass("pill")
-	runButton.AddCSSClass("selected-run-main")
 	runButton.SetHExpand(true)
 	runButton.SetTooltipText("Run wallpaper")
 
@@ -187,14 +193,19 @@ func buildSelectedRunControls(state *appState, displays []string) (*gtk.Box, *gt
 	runBox.Append(menuButton)
 	box.Append(runBox)
 
-	importButton := gtk.NewButtonWithLabel("Re-import")
-	importButton.AddCSSClass("pill")
-	importButton.SetHExpand(true)
-	importButton.SetTooltipText("Re-import Wallpaper Engine scene")
-	importButton.SetVisible(false)
-	box.Append(importButton)
+	advancedImportButton := gtk.NewButtonWithLabel("Advanced import")
+	advancedImportButton.AddCSSClass("pill")
+	advancedImportButton.SetHExpand(true)
+	advancedImportButton.SetTooltipText("Import with object selection")
+	advancedImportButton.SetVisible(false)
+	box.Append(advancedImportButton)
 
-	return box, runButton, menuButton, importButton
+	return selectedRunControls{
+		box:                  box,
+		runButton:            runButton,
+		runMenu:              menuButton,
+		advancedImportButton: advancedImportButton,
+	}
 }
 
 func updateDetail(detail detailWidgets, state *appState) {
@@ -205,7 +216,10 @@ func updateDetail(detail detailWidgets, state *appState) {
 
 	if state.selectedIndex >= 0 && state.selectedIndex < len(state.wallpapers) {
 		wallpaper := state.wallpapers[state.selectedIndex]
-		hasOptions := wallpaper.kind != wallpaperEngineScene || wallpaper.importedWallpaperEngineScene()
+		isWallpaperEngineScene := wallpaper.kind == wallpaperEngineScene
+		importedWallpaperEngineScene := isWallpaperEngineScene && wallpaper.importedWallpaperEngineScene()
+		unimportedWallpaperEngineScene := isWallpaperEngineScene && !importedWallpaperEngineScene
+		hasOptions := !isWallpaperEngineScene || importedWallpaperEngineScene
 		options := defaultWallpaperOptions()
 		if hasOptions {
 			options = wallpaperOptionsForPath(*state.settings, wallpaper.optionsPath())
@@ -219,7 +233,9 @@ func updateDetail(detail detailWidgets, state *appState) {
 		detail.speedSpin.SetValue(options.Speed)
 		detail.optionsBox.SetVisible(hasOptions)
 		updateRunButtonTitle(detail, state)
-		detail.selectedImportButton.SetVisible(wallpaper.importedWallpaperEngineScene())
+		detail.selectedRunMenu.SetVisible(!unimportedWallpaperEngineScene)
+		setRunButtonSplit(detail, !unimportedWallpaperEngineScene)
+		detail.selectedAdvancedImportButton.SetVisible(isWallpaperEngineScene)
 		setRunButtonsSensitive(detail, !state.working.Load())
 		return
 	}
@@ -231,7 +247,9 @@ func updateDetail(detail detailWidgets, state *appState) {
 	setPreviewContent(detail.preview, "")
 	detail.speedSpin.SetValue(defaultWallpaperOptions().Speed)
 	detail.optionsBox.SetVisible(false)
-	detail.selectedImportButton.SetVisible(false)
+	detail.selectedRunMenu.SetVisible(true)
+	setRunButtonSplit(detail, true)
+	detail.selectedAdvancedImportButton.SetVisible(false)
 	setRunButtonsSensitive(detail, false)
 }
 
@@ -277,24 +295,54 @@ func runSelectedWallpaper(detail detailWidgets, state *appState) {
 }
 
 func importSelectedWallpaper(detail detailWidgets, state *appState) {
-	if state.working.Load() {
+	selectedWallpaper, ok := beginSelectedWallpaperImport(detail, state)
+	if !ok {
 		return
 	}
-	if state.selectedIndex < 0 || state.selectedIndex >= len(state.wallpapers) || state.dialogParent == nil {
+
+	importWallpaperEngineScene(state.dialogParent, selectedWallpaper, wallpaperEngineImportOptions{}, func(err error) {
+		finishSelectedWallpaperImport(detail, state)
+	})
+}
+
+func importSelectedWallpaperWithOptions(detail detailWidgets, state *appState) {
+	selectedWallpaper, ok := beginSelectedWallpaperImport(detail, state)
+	if !ok {
 		return
+	}
+
+	showWallpaperEngineImportOptions(state.dialogParent, selectedWallpaper, func(options *wallpaperEngineImportOptions) {
+		if options == nil {
+			finishSelectedWallpaperImport(detail, state)
+			return
+		}
+		importWallpaperEngineScene(state.dialogParent, selectedWallpaper, *options, func(err error) {
+			finishSelectedWallpaperImport(detail, state)
+		})
+	})
+}
+
+func beginSelectedWallpaperImport(detail detailWidgets, state *appState) (wallpaper, bool) {
+	if state.working.Load() {
+		return wallpaper{}, false
+	}
+	if state.selectedIndex < 0 || state.selectedIndex >= len(state.wallpapers) || state.dialogParent == nil {
+		return wallpaper{}, false
 	}
 
 	selectedWallpaper := state.wallpapers[state.selectedIndex]
 	if selectedWallpaper.kind != wallpaperEngineScene {
-		return
+		return wallpaper{}, false
 	}
 
 	state.working.Store(true)
 	setRunButtonsSensitive(detail, false)
-	importWallpaperEngineScene(state.dialogParent, selectedWallpaper, func(err error) {
-		state.working.Store(false)
-		updateDetail(detail, state)
-	})
+	return selectedWallpaper, true
+}
+
+func finishSelectedWallpaperImport(detail detailWidgets, state *appState) {
+	state.working.Store(false)
+	updateDetail(detail, state)
 }
 
 func saveSelectedWallpaperOptions(detail detailWidgets, state *appState) {
@@ -562,7 +610,15 @@ func formatSpeed(value float64) string {
 func setRunButtonsSensitive(detail detailWidgets, sensitive bool) {
 	detail.selectedRunButton.SetSensitive(sensitive)
 	detail.selectedRunMenu.SetSensitive(sensitive)
-	detail.selectedImportButton.SetSensitive(sensitive)
+	detail.selectedAdvancedImportButton.SetSensitive(sensitive)
+}
+
+func setRunButtonSplit(detail detailWidgets, split bool) {
+	if split {
+		detail.selectedRunButton.AddCSSClass("selected-run-main")
+	} else {
+		detail.selectedRunButton.RemoveCSSClass("selected-run-main")
+	}
 }
 
 func updateRunButtonTitle(detail detailWidgets, state *appState) {

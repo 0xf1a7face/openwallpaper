@@ -113,15 +113,15 @@ type wallpaperMetadata struct {
 }
 
 type detailWidgets struct {
-	title                *gtk.Label
-	description          *gtk.Label
-	descriptionExpander  *gtk.Expander
-	preview              *previewWidget
-	optionsBox           *gtk.Box
-	speedSpin            *gtk.SpinButton
-	selectedRunButton    *gtk.Button
-	selectedRunMenu      *gtk.MenuButton
-	selectedImportButton *gtk.Button
+	title                        *gtk.Label
+	description                  *gtk.Label
+	descriptionExpander          *gtk.Expander
+	preview                      *previewWidget
+	optionsBox                   *gtk.Box
+	speedSpin                    *gtk.SpinButton
+	selectedRunButton            *gtk.Button
+	selectedRunMenu              *gtk.MenuButton
+	selectedAdvancedImportButton *gtk.Button
 }
 
 type previewWidget struct {

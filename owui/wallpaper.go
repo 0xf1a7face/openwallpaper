@@ -46,6 +46,38 @@ type wallpaperEngineProject struct {
 	Type        string `json:"type"`
 }
 
+type wallpaperEngineObject struct {
+	Index   int                     `ndl:"index"`
+	ID      int                     `ndl:"id"`
+	Parent  int                     `ndl:"parent"`
+	Type    string                  `ndl:"type"`
+	Name    string                  `ndl:"name"`
+	Effects []wallpaperEngineEffect `ndl:"effects"`
+}
+
+type wallpaperEngineEffect struct {
+	Index  int    `ndl:"index"`
+	Name   string `ndl:"name"`
+	Passes int    `ndl:"passes"`
+}
+
+type wallpaperEngineImportOptions struct {
+	skipObjects string
+	skipEffects string
+}
+
+type importEffectControl struct {
+	effect wallpaperEngineEffect
+	check  *gtk.CheckButton
+}
+
+type importObjectNode struct {
+	object   wallpaperEngineObject
+	check    *gtk.CheckButton
+	effects  []importEffectControl
+	children []*importObjectNode
+}
+
 var compileProgressPattern = regexp.MustCompile(`\[(\d+)/(\d+)\]`)
 
 func autorun() {
@@ -317,7 +349,232 @@ func showRendererLogsDialog(parent gtk.Widgetter, process *wallpaperProcess) {
 	dialog.Present(parent)
 }
 
-func importWallpaperEngineScene(parent gtk.Widgetter, wallpaper wallpaper, done func(error)) {
+func showWallpaperEngineImportOptions(parent gtk.Widgetter, wallpaper wallpaper, done func(*wallpaperEngineImportOptions)) {
+	go func() {
+		objects, logText, err := loadWallpaperEngineObjects(wallpaper)
+		glib.IdleAdd(func() {
+			if err != nil {
+				dialog, _ := rendererLogDialog("Import failed", logText)
+				dialog.Present(parent)
+				done(nil)
+				return
+			}
+			presentWallpaperEngineImportOptions(parent, objects, done)
+		})
+	}()
+}
+
+func loadWallpaperEngineObjects(wallpaper wallpaper) ([]wallpaperEngineObject, string, error) {
+	args := []string{"--list-objects-ndl", wallpaper.path}
+	output := &processOutput{}
+	fmt.Fprintf(output, "> WPE_COMPILE_ASSETS=%s %s\n", quoteCommandArg(wallpaper.assetsDir), commandLine("wpe-compile", args))
+
+	command := exec.Command("wpe-compile", args...)
+	command.Env = append(os.Environ(), "WPE_COMPILE_ASSETS="+wallpaper.assetsDir)
+	raw, err := command.CombinedOutput()
+	_, _ = output.Write(raw)
+	if err != nil {
+		output.AppendExitCode(err)
+		return nil, output.String(), err
+	}
+
+	objects := []wallpaperEngineObject{}
+	if err := ndl.Unmarshal(string(raw), &objects); err != nil {
+		fmt.Fprintf(output, "error: parse object list failed: %v\n", err)
+		return nil, output.String(), err
+	}
+	return objects, output.String(), nil
+}
+
+func presentWallpaperEngineImportOptions(parent gtk.Widgetter, objects []wallpaperEngineObject, done func(*wallpaperEngineImportOptions)) {
+	dialog := adw.NewAlertDialog("Select objects and effects", "")
+	dialog.AddResponse("cancel", "Cancel")
+	dialog.AddResponse("import", "Import")
+	dialog.SetDefaultResponse("import")
+	dialog.SetCloseResponse("cancel")
+	dialog.SetResponseAppearance("import", adw.ResponseSuggested)
+	dialog.SetPreferWideLayout(true)
+
+	list, roots := importOptionsList(objects)
+	dialog.SetExtraChild(list)
+	dialog.ConnectResponse(func(response string) {
+		if response != "import" {
+			done(nil)
+			return
+		}
+		options := importOptionsFromTree(roots)
+		done(&options)
+	})
+	dialog.Present(parent)
+}
+
+func importOptionsList(objects []wallpaperEngineObject) (gtk.Widgetter, []*importObjectNode) {
+	list := boxedList()
+	list.SetSizeRequest(520, -1)
+
+	roots := importObjectTree(objects)
+	for _, root := range roots {
+		appendImportObjectRows(list, root, 0)
+	}
+	connectImportObjectToggles(roots)
+
+	if len(objects) == 0 {
+		label := gtk.NewLabel("No objects")
+		label.SetXAlign(0)
+		list.Append(plainWidgetRow(rowContent(label)))
+	}
+
+	scrolled := gtk.NewScrolledWindow()
+	scrolled.SetMinContentHeight(260)
+	scrolled.SetMaxContentHeight(420)
+	scrolled.SetMinContentWidth(520)
+	scrolled.SetPropagateNaturalHeight(true)
+	scrolled.SetPolicy(gtk.PolicyNever, gtk.PolicyAutomatic)
+	scrolled.SetChild(list)
+	return scrolled, roots
+}
+
+func importObjectTree(objects []wallpaperEngineObject) []*importObjectNode {
+	nodes := make([]*importObjectNode, 0, len(objects))
+	nodesByID := map[int]*importObjectNode{}
+	for _, object := range objects {
+		node := &importObjectNode{object: object}
+		nodes = append(nodes, node)
+		nodesByID[object.ID] = node
+	}
+
+	roots := []*importObjectNode{}
+	for _, node := range nodes {
+		parent := nodesByID[node.object.Parent]
+		if parent == nil || parent == node {
+			roots = append(roots, node)
+		} else {
+			parent.children = append(parent.children, node)
+		}
+	}
+	return roots
+}
+
+func appendImportObjectRows(list *gtk.ListBox, node *importObjectNode, indent int) {
+	objectCheck := gtk.NewCheckButton()
+	objectCheck.SetActive(true)
+	node.check = objectCheck
+	list.Append(importCheckRow(objectCheck, objectLabel(node.object), indent))
+
+	for _, effect := range node.object.Effects {
+		effectCheck := gtk.NewCheckButton()
+		effectCheck.SetActive(true)
+		node.effects = append(node.effects, importEffectControl{
+			effect: effect,
+			check:  effectCheck,
+		})
+		list.Append(importCheckRow(effectCheck, effectLabel(effect), indent+32))
+	}
+
+	for _, child := range node.children {
+		appendImportObjectRows(list, child, indent+32)
+	}
+}
+
+func connectImportObjectToggles(roots []*importObjectNode) {
+	for _, root := range roots {
+		connectImportObjectToggle(root, roots)
+	}
+}
+
+func connectImportObjectToggle(node *importObjectNode, roots []*importObjectNode) {
+	node.check.ConnectToggled(func() {
+		updateImportObjectSensitivity(roots)
+	})
+	for _, child := range node.children {
+		connectImportObjectToggle(child, roots)
+	}
+}
+
+func updateImportObjectSensitivity(roots []*importObjectNode) {
+	for _, root := range roots {
+		updateImportObjectNodeSensitivity(root, true)
+	}
+}
+
+func updateImportObjectNodeSensitivity(node *importObjectNode, parentActive bool) {
+	node.check.SetSensitive(parentActive)
+	active := parentActive && node.check.Active()
+	for _, effect := range node.effects {
+		effect.check.SetSensitive(active)
+	}
+	for _, child := range node.children {
+		updateImportObjectNodeSensitivity(child, active)
+	}
+}
+
+func importCheckRow(check *gtk.CheckButton, labelText string, indent int) *gtk.ListBoxRow {
+	label := gtk.NewLabel(labelText)
+	label.SetXAlign(0)
+	label.SetWrap(true)
+	label.SetHExpand(true)
+
+	content := rowContent(check, label)
+	if indent > 0 {
+		content.SetMarginStart(12 + indent)
+	}
+	return plainWidgetRow(content)
+}
+
+func objectLabel(object wallpaperEngineObject) string {
+	name := strings.TrimSpace(object.Name)
+	if name == "" {
+		name = "(unnamed)"
+	}
+	return fmt.Sprintf("Object %d: %s (%s)", object.Index, name, object.Type)
+}
+
+func effectLabel(effect wallpaperEngineEffect) string {
+	name := strings.TrimSpace(effect.Name)
+	if name == "" {
+		name = "(unnamed)"
+	}
+	return fmt.Sprintf("Effect %d: %s", effect.Index, name)
+}
+
+func importOptionsFromTree(roots []*importObjectNode) wallpaperEngineImportOptions {
+	skippedObjects := []string{}
+	effectRules := []string{}
+	for _, root := range roots {
+		appendImportOptionsFromNode(root, true, &skippedObjects, &effectRules)
+	}
+
+	return wallpaperEngineImportOptions{
+		skipObjects: strings.Join(skippedObjects, ","),
+		skipEffects: strings.Join(effectRules, ";"),
+	}
+}
+
+func appendImportOptionsFromNode(node *importObjectNode, parentActive bool, skippedObjects *[]string, effectRules *[]string) {
+	active := parentActive && node.check.Active()
+	if !active {
+		if parentActive {
+			*skippedObjects = append(*skippedObjects, strconv.Itoa(node.object.Index))
+		}
+		return
+	}
+
+	skippedEffects := []string{}
+	for _, effectControl := range node.effects {
+		if !effectControl.check.Active() {
+			skippedEffects = append(skippedEffects, strconv.Itoa(effectControl.effect.Index))
+		}
+	}
+	if len(skippedEffects) > 0 {
+		*effectRules = append(*effectRules, fmt.Sprintf("%d:%s", node.object.Index, strings.Join(skippedEffects, ",")))
+	}
+
+	for _, child := range node.children {
+		appendImportOptionsFromNode(child, active, skippedObjects, effectRules)
+	}
+}
+
+func importWallpaperEngineScene(parent gtk.Widgetter, wallpaper wallpaper, options wallpaperEngineImportOptions, done func(error)) {
 	output := &processOutput{}
 
 	tempDir, err := createTemporaryImportDir(wallpaper.importDir)
@@ -331,7 +588,7 @@ func importWallpaperEngineScene(parent gtk.Widgetter, wallpaper wallpaper, done 
 		return
 	}
 
-	args := []string{wallpaper.path, tempDir}
+	args := wallpaperEngineImportArgs(wallpaper, tempDir, options)
 	fmt.Fprintf(output, "> WPE_COMPILE_ASSETS=%s %s\n", quoteCommandArg(wallpaper.assetsDir), commandLine("wpe-compile", args))
 
 	importWindow := importLogDialog(output.String())
@@ -403,6 +660,17 @@ func importWallpaperEngineScene(parent gtk.Widgetter, wallpaper wallpaper, done 
 			}
 		})
 	}()
+}
+
+func wallpaperEngineImportArgs(wallpaper wallpaper, outputDir string, options wallpaperEngineImportOptions) []string {
+	args := []string{}
+	if options.skipObjects != "" {
+		args = append(args, fmt.Sprintf("--skip-objects=%s", options.skipObjects))
+	}
+	if options.skipEffects != "" {
+		args = append(args, fmt.Sprintf("--skip-effects=%s", options.skipEffects))
+	}
+	return append(args, wallpaper.path, outputDir)
 }
 
 func createTemporaryImportDir(finalDir string) (string, error) {
