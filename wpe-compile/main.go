@@ -16,13 +16,14 @@ var (
 		Assets string
 	}
 	args struct {
-		Input       string `arg:"positional,required"`
-		Output      string `arg:"positional"`
-		Particles   bool   `arg:"--particles" default:"true"`
-		KeepSources bool   `arg:"--keep-sources"`
-		ListObjects bool   `arg:"--list-objects"`
-		SkipObjects string `arg:"--skip-objects"`
-		SkipEffects string `arg:"--skip-effects"`
+		Input          string `arg:"positional,required"`
+		Output         string `arg:"positional"`
+		Particles      bool   `arg:"--particles" default:"true"`
+		KeepSources    bool   `arg:"--keep-sources"`
+		ListObjects    bool   `arg:"--list-objects"`
+		ListObjectsNDL bool   `arg:"--list-objects-ndl"`
+		SkipObjects    string `arg:"--skip-objects"`
+		SkipEffects    string `arg:"--skip-effects"`
 	}
 	state struct {
 		PKGMap    map[string][]byte
@@ -53,7 +54,9 @@ func main() {
 	}
 
 	state.OutputMap = map[string][]byte{}
-	makeMetadata(input.ProjectPath, project, state.OutputMap)
+	if !listObjectsRequested() {
+		makeMetadata(input.ProjectPath, project, state.OutputMap)
+	}
 
 	switch strings.ToLower(project.Type) {
 	case "video":
@@ -70,6 +73,10 @@ func main() {
 		}
 		panic(fmt.Sprintf("unsupported project type %q", project.Type))
 	}
+}
+
+func listObjectsRequested() bool {
+	return args.ListObjects || args.ListObjectsNDL
 }
 
 func resolveInputDir(root string) (inputDir, error) {
@@ -122,7 +129,7 @@ func inputAssetPath(root string, name string) (string, error) {
 }
 
 func writeVideoWallpaper(input inputDir, project Project) error {
-	if args.ListObjects {
+	if listObjectsRequested() {
 		return fmt.Errorf("cannot list objects for video wallpaper")
 	}
 	if args.Output == "" {

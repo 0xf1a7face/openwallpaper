@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	ndl "github.com/mechakotik/ndl/lib"
 )
 
 type ImportTextureTask struct {
@@ -59,7 +61,10 @@ var particleVertexGLSL []byte
 var particleFragmentGLSL []byte
 
 func writeSceneWallpaper(input inputDir, project Project) error {
-	if args.Output == "" && !args.ListObjects {
+	if args.ListObjects && args.ListObjectsNDL {
+		return fmt.Errorf("--list-objects and --list-objects-ndl are mutually exclusive")
+	}
+	if args.Output == "" && !listObjectsRequested() {
 		return fmt.Errorf("output path is required")
 	}
 	if project.File != "scene.json" {
@@ -88,6 +93,9 @@ func writeSceneWallpaper(input inputDir, project Project) error {
 	if args.ListObjects {
 		printObjectList()
 		return nil
+	}
+	if args.ListObjectsNDL {
+		return printObjectListNDL()
 	}
 	if args.SkipEffects != "" {
 		if err := applySkipEffects(args.SkipEffects); err != nil {
@@ -174,6 +182,21 @@ type objectInfo struct {
 	typeName string
 }
 
+type objectListObject struct {
+	Index   int                `ndl:"index"`
+	ID      int                `ndl:"id"`
+	Parent  int                `ndl:"parent"`
+	Type    string             `ndl:"type"`
+	Name    string             `ndl:"name"`
+	Effects []objectListEffect `ndl:"effects,omitempty"`
+}
+
+type objectListEffect struct {
+	Index  int    `ndl:"index"`
+	Name   string `ndl:"name"`
+	Passes int    `ndl:"passes"`
+}
+
 func sceneObjectInfo(index int, object SceneObject) objectInfo {
 	switch object := object.(type) {
 	case *ImageObject:
@@ -207,6 +230,41 @@ func sceneObjectInfo(index int, object SceneObject) objectInfo {
 			typeName: "unknown",
 		}
 	}
+}
+
+func printObjectListNDL() error {
+	output, err := ndl.Marshal(makeObjectListData())
+	if err != nil {
+		return err
+	}
+	fmt.Print(output)
+	return nil
+}
+
+func makeObjectListData() []objectListObject {
+	objects := make([]objectListObject, 0, len(state.Scene.Objects))
+	for objectIndex, object := range state.Scene.Objects {
+		info := sceneObjectInfo(objectIndex, object)
+		listObject := objectListObject{
+			Index:  info.index,
+			ID:     info.id,
+			Parent: info.parent,
+			Type:   info.typeName,
+			Name:   info.name,
+		}
+		if imageObject, ok := object.(*ImageObject); ok {
+			listObject.Effects = make([]objectListEffect, 0, len(imageObject.Effects))
+			for effectIndex, effect := range imageObject.Effects {
+				listObject.Effects = append(listObject.Effects, objectListEffect{
+					Index:  effectIndex,
+					Name:   effectDisplayName(effect),
+					Passes: len(effect.Passes),
+				})
+			}
+		}
+		objects = append(objects, listObject)
+	}
+	return objects
 }
 
 func printObjectList() {
@@ -1178,6 +1236,7 @@ func compileRawShader(source []byte, glslcArgs []string) ([]byte, error) {
 		return []byte{}, fmt.Errorf("write shader.glsl failed: %s", err)
 	}
 
+	glslcArgs = append(glslcArgs, glslcIncludeArgs()...)
 	glslcArgs = append(glslcArgs, tempDir+"/shader.glsl", "-o", tempDir+"/shader.spv")
 	logBytes, err := exec.Command("glslc", glslcArgs...).CombinedOutput()
 	if err != nil {
