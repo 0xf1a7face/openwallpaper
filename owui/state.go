@@ -103,6 +103,7 @@ type wallpaperKind int
 
 const (
 	wallpaperEngineScene wallpaperKind = iota + 1
+	wallpaperEngineVideo
 )
 
 type wallpaper struct {
@@ -127,10 +128,13 @@ type detailWidgets struct {
 	descriptionExpander          *gtk.Expander
 	preview                      *previewWidget
 	optionsBox                   *gtk.Box
+	otherBox                     *gtk.Box
 	speedSpin                    *gtk.SpinButton
 	selectedRunButton            *gtk.Button
 	selectedRunMenu              *gtk.MenuButton
 	selectedAdvancedImportButton *gtk.Button
+	bottomAdvancedImportButton   *gtk.Button
+	deleteWallpaperButton        *gtk.Button
 }
 
 type previewWidget struct {
@@ -152,6 +156,7 @@ type appState struct {
 	exiting                atomic.Bool
 	updatingDetail         bool
 	working                atomic.Bool
+	refreshWallpapers      func()
 }
 
 func (state *appState) notifyDisplayMappingsChanged() {

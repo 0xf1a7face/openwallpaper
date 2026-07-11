@@ -76,6 +76,7 @@ func buildUI(app *adw.Application) {
 	})
 
 	libraryPane, refreshWallpapers := buildLibraryPane(state, detail)
+	state.refreshWallpapers = refreshWallpapers
 
 	mainPaned := gtk.NewPaned(gtk.OrientationHorizontal)
 	mainPaned.SetVExpand(true)

@@ -106,16 +106,35 @@ func buildSelectedPane(state *appState, displays []string) (*gtk.Box, detailWidg
 	optionsBox.Append(optionsList)
 	body.Append(optionsBox)
 
+	otherBox := gtk.NewBox(gtk.OrientationVertical, 6)
+	otherBox.SetHExpand(true)
+	otherBox.SetVisible(false)
+	otherBox.Append(sectionLabel("Other"))
+
+	bottomAdvancedImportButton := newAdvancedImportButton()
+	otherBox.Append(bottomAdvancedImportButton)
+
+	deleteWallpaperButton := gtk.NewButtonWithLabel("Delete wallpaper")
+	deleteWallpaperButton.AddCSSClass("destructive-action")
+	deleteWallpaperButton.AddCSSClass("pill")
+	deleteWallpaperButton.SetHExpand(true)
+	deleteWallpaperButton.SetVisible(false)
+	otherBox.Append(deleteWallpaperButton)
+	body.Append(otherBox)
+
 	detail := detailWidgets{
 		title:                        title,
 		description:                  description,
 		descriptionExpander:          descriptionExpander,
 		preview:                      largePreview,
 		optionsBox:                   optionsBox,
+		otherBox:                     otherBox,
 		speedSpin:                    speedSpin,
 		selectedRunButton:            runControls.runButton,
 		selectedRunMenu:              runControls.runMenu,
 		selectedAdvancedImportButton: runControls.advancedImportButton,
+		bottomAdvancedImportButton:   bottomAdvancedImportButton,
+		deleteWallpaperButton:        deleteWallpaperButton,
 	}
 	updateDetail(detail, state)
 	detail.selectedRunButton.ConnectClicked(func() {
@@ -123,6 +142,12 @@ func buildSelectedPane(state *appState, displays []string) (*gtk.Box, detailWidg
 	})
 	detail.selectedAdvancedImportButton.ConnectClicked(func() {
 		importSelectedWallpaperWithOptions(detail, state)
+	})
+	detail.bottomAdvancedImportButton.ConnectClicked(func() {
+		importSelectedWallpaperWithOptions(detail, state)
+	})
+	detail.deleteWallpaperButton.ConnectClicked(func() {
+		deleteSelectedWallpaper(detail, state)
 	})
 	detail.speedSpin.ConnectValueChanged(func() {
 		if !state.updatingDetail {
@@ -192,11 +217,7 @@ func buildSelectedRunControls(state *appState, displays []string) selectedRunCon
 	runBox.Append(menuButton)
 	box.Append(runBox)
 
-	advancedImportButton := gtk.NewButtonWithLabel("Advanced import")
-	advancedImportButton.AddCSSClass("pill")
-	advancedImportButton.SetHExpand(true)
-	advancedImportButton.SetTooltipText("Import with object selection")
-	advancedImportButton.SetVisible(false)
+	advancedImportButton := newAdvancedImportButton()
 	box.Append(advancedImportButton)
 
 	return selectedRunControls{
@@ -205,6 +226,15 @@ func buildSelectedRunControls(state *appState, displays []string) selectedRunCon
 		runMenu:              menuButton,
 		advancedImportButton: advancedImportButton,
 	}
+}
+
+func newAdvancedImportButton() *gtk.Button {
+	button := gtk.NewButtonWithLabel("Advanced import")
+	button.AddCSSClass("pill")
+	button.SetHExpand(true)
+	button.SetTooltipText("Import with object selection")
+	button.SetVisible(false)
+	return button
 }
 
 func updateDetail(detail detailWidgets, state *appState) {
@@ -234,8 +264,13 @@ func updateDetail(detail detailWidgets, state *appState) {
 		updateRunButtonTitle(detail, state)
 		detail.selectedRunMenu.SetVisible(!unimportedWallpaperEngineScene)
 		setRunButtonSplit(detail, !unimportedWallpaperEngineScene)
-		detail.selectedAdvancedImportButton.SetVisible(isWallpaperEngineScene)
-		setRunButtonsSensitive(detail, !state.working.Load())
+		showBottomAdvancedImport := importedWallpaperEngineScene
+		showDeleteWallpaper := wallpaper.canDelete()
+		detail.selectedAdvancedImportButton.SetVisible(unimportedWallpaperEngineScene)
+		detail.bottomAdvancedImportButton.SetVisible(showBottomAdvancedImport)
+		detail.deleteWallpaperButton.SetVisible(showDeleteWallpaper)
+		detail.otherBox.SetVisible(showBottomAdvancedImport || showDeleteWallpaper)
+		setSelectedActionButtonsSensitive(detail, !state.working.Load())
 		return
 	}
 
@@ -249,7 +284,10 @@ func updateDetail(detail detailWidgets, state *appState) {
 	detail.selectedRunMenu.SetVisible(true)
 	setRunButtonSplit(detail, true)
 	detail.selectedAdvancedImportButton.SetVisible(false)
-	setRunButtonsSensitive(detail, false)
+	detail.bottomAdvancedImportButton.SetVisible(false)
+	detail.deleteWallpaperButton.SetVisible(false)
+	detail.otherBox.SetVisible(false)
+	setSelectedActionButtonsSensitive(detail, false)
 }
 
 func runSelectedWallpaper(detail detailWidgets, state *appState) {
@@ -273,7 +311,7 @@ func runSelectedWallpaper(detail detailWidgets, state *appState) {
 	settingsPath := selectedWallpaper.optionsPath()
 
 	state.working.Store(true)
-	setRunButtonsSensitive(detail, false)
+	setSelectedActionButtonsSensitive(detail, false)
 
 	display := state.selectedDisplay
 	if state.settings.AutorunWallpapers == nil {
@@ -289,7 +327,7 @@ func runSelectedWallpaper(detail detailWidgets, state *appState) {
 		runWallpaperWithArgs(state, settingsPath, display, args)
 		glib.IdleAdd(func() {
 			state.working.Store(false)
-			setRunButtonsSensitive(detail, state.selectedIndex >= 0 && state.selectedIndex < len(state.wallpapers))
+			setSelectedActionButtonsSensitive(detail, state.selectedIndex >= 0 && state.selectedIndex < len(state.wallpapers))
 		})
 	}()
 }
@@ -347,7 +385,7 @@ func beginSelectedWallpaperImport(detail detailWidgets, state *appState) (wallpa
 	}
 
 	state.working.Store(true)
-	setRunButtonsSensitive(detail, false)
+	setSelectedActionButtonsSensitive(detail, false)
 	return selectedWallpaper, true
 }
 
@@ -376,6 +414,56 @@ func saveSelectedWallpaperOptions(detail detailWidgets, state *appState) {
 
 	state.settings.setWallpaperOptions(wallpaper.optionsPath(), options)
 	saveSettings(*state.settings)
+}
+
+func deleteSelectedWallpaper(detail detailWidgets, state *appState) {
+	if state.working.Load() {
+		return
+	}
+	if state.selectedIndex < 0 || state.selectedIndex >= len(state.wallpapers) {
+		return
+	}
+
+	wallpaper := state.wallpapers[state.selectedIndex]
+	deletePath, ok, err := deleteWallpaperFiles(wallpaper)
+	if !ok {
+		return
+	}
+	if err != nil {
+		showDeleteErrorDialog(state, err)
+		return
+	}
+
+	removeWallpaperFromSettings(state, deletePath)
+	if state.refreshWallpapers != nil {
+		state.refreshWallpapers()
+	} else {
+		updateDetail(detail, state)
+	}
+}
+
+func removeWallpaperFromSettings(state *appState, path string) {
+	delete(state.settings.WallpaperOptions, path)
+	for display, wallpaperPath := range state.settings.AutorunWallpapers {
+		if wallpaperPath != path {
+			continue
+		}
+		delete(state.settings.AutorunWallpapers, display)
+		stopWallpaper(state, display)
+	}
+	saveSettings(*state.settings)
+	state.notifyDisplayMappingsChanged()
+}
+
+func showDeleteErrorDialog(state *appState, err error) {
+	if state.dialogParent == nil {
+		return
+	}
+	dialog := adw.NewAlertDialog("Delete failed", err.Error())
+	dialog.AddResponse("close", "Close")
+	dialog.SetDefaultResponse("close")
+	dialog.SetCloseResponse("close")
+	dialog.Present(state.dialogParent)
 }
 
 func showOverrideOptionsDialog(state *appState) {
@@ -626,10 +714,12 @@ func formatSpeed(value float64) string {
 	return strconv.FormatFloat(value, 'f', -1, 64)
 }
 
-func setRunButtonsSensitive(detail detailWidgets, sensitive bool) {
+func setSelectedActionButtonsSensitive(detail detailWidgets, sensitive bool) {
 	detail.selectedRunButton.SetSensitive(sensitive)
 	detail.selectedRunMenu.SetSensitive(sensitive)
 	detail.selectedAdvancedImportButton.SetSensitive(sensitive)
+	detail.bottomAdvancedImportButton.SetSensitive(sensitive)
+	detail.deleteWallpaperButton.SetSensitive(sensitive)
 }
 
 func setRunButtonSplit(detail detailWidgets, split bool) {

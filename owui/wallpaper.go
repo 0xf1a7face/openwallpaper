@@ -1233,6 +1233,7 @@ func loadWallpaperEngineWallpaper(path string, assetsDir string) (wallpaper, boo
 			path:        path,
 			launchPath:  videoPath,
 			previewPath: previewPath,
+			kind:        wallpaperEngineVideo,
 		}, true
 	default:
 		return wallpaper{}, false
@@ -1379,6 +1380,38 @@ func (wallpaper wallpaper) wallpaperEngineImportedLaunchPath() string {
 
 func (wallpaper wallpaper) importedWallpaperEngineScene() bool {
 	return wallpaper.kind == wallpaperEngineScene && wallpaper.runnableLaunchPath() != ""
+}
+
+func (wallpaper wallpaper) canDelete() bool {
+	_, ok := wallpaper.deletePath()
+	return ok
+}
+
+func (wallpaper wallpaper) deletePath() (string, bool) {
+	switch wallpaper.kind {
+	case wallpaperEngineScene:
+		if wallpaper.importedWallpaperEngineScene() {
+			return wallpaper.importDir, true
+		}
+		return "", false
+	case wallpaperEngineVideo:
+		return "", false
+	default:
+		return wallpaper.path, wallpaper.path != ""
+	}
+}
+
+func deleteWallpaperFiles(wallpaper wallpaper) (string, bool, error) {
+	path, ok := wallpaper.deletePath()
+	if !ok {
+		return "", false, nil
+	}
+
+	clean := filepath.Clean(path)
+	if clean == "." || clean == string(filepath.Separator) {
+		return path, true, fmt.Errorf("refusing to delete unsafe wallpaper path %q", path)
+	}
+	return path, true, os.RemoveAll(path)
 }
 
 func loadWallpaper(path string, launchPath string, fallbackTitle string) wallpaper {
