@@ -30,16 +30,15 @@ func buildOptionsPage(state *appState) *gtk.ScrolledWindow {
 	scrolled.SetPolicy(gtk.PolicyNever, gtk.PolicyAutomatic)
 	scrolled.SetChild(clamp)
 
-	addCommonOptions(content, state)
+	addGeneralOptions(content, state)
 	addSceneOptions(content, state)
 	addVideoOptions(content, state)
-	addWallpaperEngineOptions(content, state)
 
 	return scrolled
 }
 
-func addCommonOptions(content *gtk.Box, state *appState) {
-	content.Append(sectionLabel("Common"))
+func addGeneralOptions(content *gtk.Box, state *appState) {
+	content.Append(sectionLabel("General"))
 
 	list := boxedList()
 
@@ -57,6 +56,14 @@ func addCommonOptions(content *gtk.Box, state *appState) {
 	list.Append(labeledWidgetRow("Pause when laptop is on battery power", batterySwitch))
 	bindSwitch(batterySwitch, state, func(s *settings, value bool) {
 		s.PauseOnBat = value
+	})
+
+	steamLibrary := gtk.NewEntry()
+	steamLibrary.SetPlaceholderText(defaultSteamLibraryPath())
+	steamLibrary.SetText(state.settings.SteamLibraryPath)
+	list.Append(entryRow("Steam Library path", steamLibrary))
+	bindEntry(steamLibrary, state, func(s *settings, value string) {
+		s.SteamLibraryPath = value
 	})
 
 	content.Append(list)
@@ -159,22 +166,6 @@ func addVideoOptions(content *gtk.Box, state *appState) {
 			state.settings.VideoFilter = filterOptions[selected]
 		}
 		saveSettings(*state.settings)
-	})
-
-	content.Append(list)
-}
-
-func addWallpaperEngineOptions(content *gtk.Box, state *appState) {
-	content.Append(sectionLabel("Wallpaper Engine support"))
-
-	list := boxedList()
-
-	steamLibrary := gtk.NewEntry()
-	steamLibrary.SetPlaceholderText(defaultSteamLibraryPath())
-	steamLibrary.SetText(state.settings.SteamLibraryPath)
-	list.Append(entryRow("Steam Library path", steamLibrary))
-	bindEntry(steamLibrary, state, func(s *settings, value string) {
-		s.SteamLibraryPath = value
 	})
 
 	content.Append(list)
