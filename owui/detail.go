@@ -102,7 +102,6 @@ func buildSelectedPane(state *appState, displays []string) (*gtk.Box, detailWidg
 	})
 	optionsList.Append(overrideOptionsRow)
 
-	optionsList.Append(menuSectionRow("terminal", "Custom commands"))
 	optionsBox.Append(optionsList)
 	body.Append(optionsBox)
 
