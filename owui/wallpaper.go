@@ -434,7 +434,6 @@ func importOptionsList(objects []wallpaperEngineObject, savedOptions wallpaperOp
 	}
 
 	scrolled := gtk.NewScrolledWindow()
-	scrolled.SetMinContentHeight(260)
 	scrolled.SetMaxContentHeight(420)
 	scrolled.SetMinContentWidth(520)
 	scrolled.SetPropagateNaturalHeight(true)
