@@ -8,6 +8,8 @@ import (
 	"github.com/diamondburned/gotk4/pkg/pango"
 )
 
+var previewLoadSlots = make(chan struct{}, 4)
+
 func buildLibraryPane(state *appState, detail detailWidgets) (*gtk.Box, func()) {
 	pane := gtk.NewBox(gtk.OrientationVertical, 0)
 	pane.SetHExpand(true)
@@ -17,14 +19,21 @@ func buildLibraryPane(state *appState, detail detailWidgets) (*gtk.Box, func()) 
 	selection := gtk.NewSingleSelection(model)
 
 	factory := gtk.NewSignalListItemFactory()
+	previews := map[uintptr]*previewWidget{}
 	factory.ConnectBind(func(object *glib.Object) {
 		item := object.Cast().(*gtk.ListItem)
 		position := item.Position()
 		if position < uint(len(state.wallpapers)) {
-			item.SetChild(buildWallpaperTile(state.wallpapers[position]))
+			tile, preview := buildWallpaperTile(state.wallpapers[position])
+			previews[object.Native()] = preview
+			item.SetChild(tile)
+			setPreviewContent(preview, state.wallpapers[position].previewPath)
 		}
 	})
 	factory.ConnectUnbind(func(object *glib.Object) {
+		key := object.Native()
+		cancelPreviewLoad(previews[key])
+		delete(previews, key)
 		object.Cast().(*gtk.ListItem).SetChild(nil)
 	})
 
@@ -100,7 +109,7 @@ func buildLibraryPane(state *appState, detail detailWidgets) (*gtk.Box, func()) 
 	return pane, refreshWallpapers
 }
 
-func buildWallpaperTile(wallpaper wallpaper) *gtk.Box {
+func buildWallpaperTile(wallpaper wallpaper) (*gtk.Box, *previewWidget) {
 	tile := gtk.NewBox(gtk.OrientationVertical, 6)
 	tile.SetSizeRequest(galleryTileWidth, galleryTileHeight)
 	tile.SetHAlign(gtk.AlignCenter)
@@ -109,7 +118,7 @@ func buildWallpaperTile(wallpaper wallpaper) *gtk.Box {
 	tile.SetVExpand(false)
 	tile.AddCSSClass("wallpaper-tile")
 
-	preview := buildPreviewBox(wallpaper.previewPath, galleryPreviewWidth, galleryPreviewHeight)
+	preview := buildPreviewBox(galleryPreviewWidth, galleryPreviewHeight)
 	preview.overlay.SetHAlign(gtk.AlignCenter)
 	preview.overlay.SetHExpand(false)
 	preview.overlay.SetVAlign(gtk.AlignCenter)
@@ -128,10 +137,10 @@ func buildWallpaperTile(wallpaper wallpaper) *gtk.Box {
 	label.SetHExpand(false)
 	tile.Append(label)
 
-	return tile
+	return tile, preview
 }
 
-func buildPreviewBox(previewPath string, width int, height int) *previewWidget {
+func buildPreviewBox(width int, height int) *previewWidget {
 	overlay := gtk.NewOverlay()
 	overlay.SetSizeRequest(width, height)
 	overlay.SetOverflow(gtk.OverflowHidden)
@@ -145,46 +154,75 @@ func buildPreviewBox(previewPath string, width int, height int) *previewWidget {
 	measure.SetVExpand(true)
 	overlay.SetChild(measure)
 
-	placeholder := gtk.NewLabel("No preview")
-	placeholder.SetHAlign(gtk.AlignCenter)
-	placeholder.SetVAlign(gtk.AlignCenter)
-	overlay.AddOverlay(placeholder)
-	overlay.SetMeasureOverlay(placeholder, false)
-
 	preview := &previewWidget{
-		overlay:     overlay,
-		measure:     measure,
-		placeholder: placeholder,
+		overlay: overlay,
+		measure: measure,
 	}
-	setPreviewContent(preview, previewPath)
-
 	return preview
 }
 
 func setPreviewContent(preview *previewWidget, previewPath string) {
+	cancelPreviewLoad(preview)
 	if preview.picture != nil {
 		preview.overlay.RemoveOverlay(preview.picture)
 		preview.picture = nil
 	}
-
-	if previewPath != "" {
-		if pixbuf, err := loadPreviewPixbuf(previewPath); err == nil && pixbuf != nil {
-			picture := gtk.NewPictureForPaintable(gdk.NewTextureForPixbuf(pixbuf))
-			picture.SetContentFit(gtk.ContentFitCover)
-			picture.SetCanShrink(true)
-			picture.SetHAlign(gtk.AlignFill)
-			picture.SetVAlign(gtk.AlignFill)
-			picture.SetHExpand(true)
-			picture.SetVExpand(true)
-
-			preview.overlay.AddOverlay(picture)
-			preview.overlay.SetMeasureOverlay(picture, false)
-			preview.overlay.SetClipOverlay(picture, true)
-			preview.picture = picture
-		}
+	if previewPath == "" {
+		return
 	}
 
-	preview.placeholder.SetVisible(preview.picture == nil)
+	preview.loadCancel = make(chan struct{})
+	go loadPreview(preview, previewPath, preview.loadCancel)
+}
+
+func cancelPreviewLoad(preview *previewWidget) {
+	if preview != nil && preview.loadCancel != nil {
+		close(preview.loadCancel)
+		preview.loadCancel = nil
+	}
+}
+
+func loadPreview(preview *previewWidget, path string, cancelled <-chan struct{}) {
+	select {
+	case previewLoadSlots <- struct{}{}:
+	case <-cancelled:
+		return
+	}
+	pixbuf, err := loadPreviewPixbuf(path)
+	<-previewLoadSlots
+	if err != nil || pixbuf == nil || previewLoadCancelled(cancelled) {
+		return
+	}
+
+	glib.IdleAdd(func() {
+		if !previewLoadCancelled(cancelled) {
+			showPreview(preview, pixbuf)
+		}
+	})
+}
+
+func previewLoadCancelled(cancelled <-chan struct{}) bool {
+	select {
+	case <-cancelled:
+		return true
+	default:
+		return false
+	}
+}
+
+func showPreview(preview *previewWidget, pixbuf *gdkpixbuf.Pixbuf) {
+	picture := gtk.NewPictureForPaintable(gdk.NewTextureForPixbuf(pixbuf))
+	picture.SetContentFit(gtk.ContentFitCover)
+	picture.SetCanShrink(true)
+	picture.SetHAlign(gtk.AlignFill)
+	picture.SetVAlign(gtk.AlignFill)
+	picture.SetHExpand(true)
+	picture.SetVExpand(true)
+
+	preview.overlay.AddOverlay(picture)
+	preview.overlay.SetMeasureOverlay(picture, false)
+	preview.overlay.SetClipOverlay(picture, true)
+	preview.picture = picture
 }
 
 func loadPreviewPixbuf(path string) (*gdkpixbuf.Pixbuf, error) {

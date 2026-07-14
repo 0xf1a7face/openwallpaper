@@ -34,7 +34,7 @@ func buildSelectedPane(state *appState, displays []string) (*gtk.Box, detailWidg
 	scrolled.SetChild(body)
 	pane.Append(scrolled)
 
-	largePreview := buildPreviewBox("", 160, 90)
+	largePreview := buildPreviewBox(160, 90)
 	largePreview.overlay.SetSizeRequest(-1, 90)
 	largePreview.measure.SetSizeRequest(-1, 90)
 	largePreview.overlay.SetHExpand(true)

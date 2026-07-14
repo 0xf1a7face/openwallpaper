@@ -138,10 +138,10 @@ type detailWidgets struct {
 }
 
 type previewWidget struct {
-	overlay     *gtk.Overlay
-	measure     *gtk.Box
-	placeholder *gtk.Label
-	picture     *gtk.Picture
+	overlay    *gtk.Overlay
+	measure    *gtk.Box
+	picture    *gtk.Picture
+	loadCancel chan struct{}
 }
 
 type appState struct {
