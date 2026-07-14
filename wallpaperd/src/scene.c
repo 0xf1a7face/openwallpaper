@@ -103,13 +103,16 @@ static bool compile_aot_to_cache(
     bool result = false;
 
     sds tmp_dir = wd_cache_get_namespace_dir("tmp");
+    sds wasm_path = NULL;
+    sds aot_path = NULL;
+
     if(tmp_dir == NULL) {
         printf("warning: failed to get tmp cache dir for AOT compilation, using interpreter mode\n");
         goto cleanup;
     }
 
-    sds wasm_path = sdscatprintf(sdsdup(tmp_dir), "/%s.tmp-wasm", cache_key);
-    sds aot_path = sdscatprintf(sdsdup(tmp_dir), "/%s.tmp-aot", cache_key);
+    wasm_path = sdscatprintf(sdsdup(tmp_dir), "/%s.tmp-wasm", cache_key);
+    aot_path = sdscatprintf(sdsdup(tmp_dir), "/%s.tmp-aot", cache_key);
 
     wd_cache_remove_file(wasm_path);
     wd_cache_remove_file(aot_path);
