@@ -472,6 +472,7 @@ func showOverrideOptionsDialog(state *appState) {
 
 	wallpaper := state.wallpapers[state.selectedIndex]
 	optionsPath := wallpaper.optionsPath()
+	launchPath := wallpaper.runnableLaunchPath()
 	options := wallpaperOptionsForPath(*state.settings, optionsPath)
 
 	dialog := adw.NewAlertDialog("Override global options", "")
@@ -500,7 +501,7 @@ func showOverrideOptionsDialog(state *appState) {
 		refreshControls()
 	}
 
-	if isSceneFile(optionsPath) {
+	if isSceneFile(launchPath) {
 		scene := func() sceneWallpaperOptions {
 			return sceneOptionsWithOverrides(globalSceneOptions(*state.settings), options)
 		}
@@ -618,7 +619,7 @@ func showOverrideOptionsDialog(state *appState) {
 		sourceReset.ConnectClicked(func() {
 			saveAndRefresh(func() { options.AudioSourceOverridden = false })
 		})
-	} else if isVideoFile(optionsPath) {
+	} else if isVideoFile(launchPath) {
 		video := func() videoWallpaperOptions {
 			return videoOptionsWithOverrides(globalVideoOptions(*state.settings), options)
 		}
