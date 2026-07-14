@@ -3,6 +3,7 @@ package main
 import (
 	"github.com/diamondburned/gotk4/pkg/gdk/v4"
 	"github.com/diamondburned/gotk4/pkg/gdkpixbuf/v2"
+	"github.com/diamondburned/gotk4/pkg/glib/v2"
 	"github.com/diamondburned/gotk4/pkg/gtk/v4"
 	"github.com/diamondburned/gotk4/pkg/pango"
 )
@@ -12,20 +13,28 @@ func buildLibraryPane(state *appState, detail detailWidgets) (*gtk.Box, func()) 
 	pane.SetHExpand(true)
 	pane.SetVExpand(true)
 
-	flowBox := gtk.NewFlowBox()
-	flowBox.AddCSSClass("wallpaper-grid")
-	flowBox.SetVAlign(gtk.AlignStart)
-	flowBox.SetVExpand(false)
-	flowBox.SetActivateOnSingleClick(false)
-	flowBox.SetColumnSpacing(18)
-	flowBox.SetRowSpacing(18)
-	flowBox.SetMarginTop(18)
-	flowBox.SetMarginBottom(18)
-	flowBox.SetMarginStart(18)
-	flowBox.SetMarginEnd(18)
-	flowBox.SetMaxChildrenPerLine(64)
-	flowBox.SetMinChildrenPerLine(1)
-	flowBox.SetSelectionMode(gtk.SelectionSingle)
+	model := gtk.NewStringList(nil)
+	selection := gtk.NewSingleSelection(model)
+
+	factory := gtk.NewSignalListItemFactory()
+	factory.ConnectBind(func(object *glib.Object) {
+		item := object.Cast().(*gtk.ListItem)
+		position := item.Position()
+		if position < uint(len(state.wallpapers)) {
+			item.SetChild(buildWallpaperTile(state.wallpapers[position]))
+		}
+	})
+	factory.ConnectUnbind(func(object *glib.Object) {
+		object.Cast().(*gtk.ListItem).SetChild(nil)
+	})
+
+	grid := gtk.NewGridView(selection, &factory.ListItemFactory)
+	grid.AddCSSClass("wallpaper-grid")
+	grid.SetMaxColumns(64)
+	grid.SetMarginTop(9)
+	grid.SetMarginBottom(9)
+	grid.SetMarginStart(9)
+	grid.SetMarginEnd(9)
 
 	refreshing := false
 	populate := func(selectedPath string) {
@@ -34,25 +43,20 @@ func buildLibraryPane(state *appState, detail detailWidgets) (*gtk.Box, func()) 
 			refreshing = false
 		}()
 
-		flowBox.RemoveAll()
-		for _, wallpaper := range state.wallpapers {
-			flowBox.Insert(buildWallpaperTile(wallpaper), -1)
-		}
-
 		state.selectedIndex = -1
+		items := make([]string, len(state.wallpapers))
 		selectedIndex := 0
-		if selectedPath != "" {
-			for index, wallpaper := range state.wallpapers {
-				if wallpaper.path == selectedPath {
-					selectedIndex = index
-					break
-				}
+		for index, wallpaper := range state.wallpapers {
+			items[index] = wallpaper.path
+			if selectedPath != "" && wallpaper.path == selectedPath {
+				selectedIndex = index
 			}
 		}
+		model.Splice(0, model.NItems(), items)
 
-		if child := flowBox.ChildAtIndex(selectedIndex); child != nil {
+		if len(state.wallpapers) > 0 {
 			state.selectedIndex = selectedIndex
-			flowBox.SelectChild(child)
+			selection.SetSelected(uint(selectedIndex))
 		}
 		updateDetail(detail, state)
 	}
@@ -66,28 +70,22 @@ func buildLibraryPane(state *appState, detail detailWidgets) (*gtk.Box, func()) 
 		populate(selectedPath)
 	}
 
-	flowBox.ConnectSelectedChildrenChanged(func() {
+	selection.NotifyProperty("selected", func() {
 		if refreshing {
 			return
 		}
-		selected := flowBox.SelectedChildren()
-		if len(selected) == 0 {
+		position := selection.Selected()
+		if position >= uint(len(state.wallpapers)) {
 			return
 		}
-		index := selected[0].Index()
-		if index >= 0 {
-			state.selectedIndex = index
-			updateDetail(detail, state)
-		}
-	})
-	flowBox.ConnectChildActivated(func(child *gtk.FlowBoxChild) {
-		index := child.Index()
-		if index < 0 {
-			return
-		}
-		state.selectedIndex = index
-		flowBox.SelectChild(child)
+		state.selectedIndex = int(position)
 		updateDetail(detail, state)
+	})
+	grid.ConnectActivate(func(position uint) {
+		if position >= uint(len(state.wallpapers)) {
+			return
+		}
+		state.selectedIndex = int(position)
 		runSelectedWallpaper(detail, state)
 	})
 
@@ -96,7 +94,7 @@ func buildLibraryPane(state *appState, detail detailWidgets) (*gtk.Box, func()) 
 	scrolled.SetHExpand(true)
 	scrolled.SetVExpand(true)
 	scrolled.SetPolicy(gtk.PolicyNever, gtk.PolicyAutomatic)
-	scrolled.SetChild(flowBox)
+	scrolled.SetChild(grid)
 	pane.Append(scrolled)
 
 	return pane, refreshWallpapers

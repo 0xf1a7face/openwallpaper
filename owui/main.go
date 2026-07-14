@@ -161,6 +161,11 @@ func installCSS() {
 			background: @view_bg_color;
 		}
 
+		gridview.wallpaper-grid > child {
+			margin: 9px;
+			border-radius: 6px;
+		}
+
 		.preview-box,
 		.large-preview-box {
 			background: alpha(currentColor, 0.08);
