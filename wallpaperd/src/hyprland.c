@@ -206,9 +206,7 @@ static bool query_output_hidden(const char* output_name, bool* output_hidden) {
     return ok;
 }
 
-void wd_hyprland_init(wd_hyprland_state* state) {
-    state->output_hidden = false;
-    state->output_hidden_valid = false;
+static void connect_event_socket(wd_hyprland_state* state) {
     state->socket = socket(AF_UNIX, SOCK_STREAM, 0);
     if(state->socket == -1) {
         printf("warning: failed to create socket, pause-hidden will not work: %s\n", strerror(errno));
@@ -230,8 +228,8 @@ void wd_hyprland_init(wd_hyprland_state* state) {
     name.sun_family = AF_UNIX;
     int res =
         snprintf(name.sun_path, sizeof(name.sun_path), "%s/hypr/%s/.socket2.sock", runtime_dir, hyprland_instance);
-    if(res == sizeof(name.sun_path)) {
-        printf("warning: socket path is too long, pause-hidden will not work: %s\n", strerror(errno));
+    if(res < 0 || (size_t)res >= sizeof(name.sun_path)) {
+        printf("warning: socket path is too long, pause-hidden will not work\n");
         goto handle_error;
     }
 
@@ -257,26 +255,66 @@ handle_error:
     state->socket = -1;
 }
 
+void wd_hyprland_init(wd_hyprland_state* state) {
+    state->socket = -1;
+    state->output_hidden = false;
+    state->output_hidden_valid = false;
+    connect_event_socket(state);
+}
+
 void wd_hyprland_reset_output_hidden(wd_hyprland_state* state) {
     state->output_hidden = false;
     state->output_hidden_valid = false;
 }
 
+static void reconnect_event_socket(wd_hyprland_state* state) {
+    if(state->socket != -1) {
+        close(state->socket);
+        state->socket = -1;
+    }
+    wd_hyprland_reset_output_hidden(state);
+    connect_event_socket(state);
+}
+
+static void poll_events(wd_hyprland_state* state) {
+    if(state->socket == -1) {
+        return;
+    }
+
+    static char buf[128];
+    bool event_received = false;
+    bool disconnected = false;
+    while(true) {
+        ssize_t res = read(state->socket, buf, sizeof(buf));
+        if(res == 0) {
+            disconnected = true;
+            break;
+        }
+        if(res < 0) {
+            if(errno == EINTR) {
+                continue;
+            }
+            disconnected = errno != EAGAIN && errno != EWOULDBLOCK;
+            break;
+        }
+        event_received = true;
+    }
+
+    if(disconnected) {
+        reconnect_event_socket(state);
+    } else if(event_received) {
+        wd_hyprland_reset_output_hidden(state);
+    }
+}
+
 bool wd_hyprland_output_hidden(wd_hyprland_state* state, const char* output_name) {
+    poll_events(state);
+
     if(state->socket == -1) {
         return false;
     }
 
-    static char buf[128];
-    bool refresh_needed = !state->output_hidden_valid;
-    while(true) {
-        ssize_t res = read(state->socket, buf, sizeof(buf));
-        if(res <= 0) {
-            break;
-        }
-        refresh_needed = true;
-    }
-    if(!refresh_needed) {
+    if(state->output_hidden_valid) {
         return state->output_hidden;
     }
 
@@ -293,7 +331,9 @@ bool wd_hyprland_output_hidden(wd_hyprland_state* state, const char* output_name
 }
 
 void wd_hyprland_free(wd_hyprland_state* state) {
-    close(state->socket);
+    if(state->socket != -1) {
+        close(state->socket);
+    }
     state->socket = -1;
     state->output_hidden = false;
     state->output_hidden_valid = false;
