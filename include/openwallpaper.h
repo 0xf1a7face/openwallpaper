@@ -116,12 +116,6 @@ typedef enum {
 } ow_filter_mode;
 
 typedef enum {
-    OW_BUFFER_VERTEX,
-    OW_BUFFER_INDEX16,
-    OW_BUFFER_INDEX32,
-} ow_buffer_type;
-
-typedef enum {
     OW_ATTRIBUTE_INT,
     OW_ATTRIBUTE_INT2,
     OW_ATTRIBUTE_INT3,
