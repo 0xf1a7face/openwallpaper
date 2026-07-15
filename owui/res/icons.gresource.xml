@@ -6,6 +6,7 @@
     <file alias="scalable/actions/owui-go-next-symbolic.svg">icons/go-next.svg</file>
     <file alias="scalable/actions/owui-display-symbolic.svg">icons/display.svg</file>
     <file alias="scalable/actions/owui-reset-symbolic.svg">icons/reset.svg</file>
+    <file alias="scalable/actions/owui-search-symbolic.svg">icons/search.svg</file>
     <file alias="scalable/actions/owui-settings-symbolic.svg">icons/settings.svg</file>
     <file alias="scalable/actions/owui-terminal-symbolic.svg">icons/terminal.svg</file>
     <file alias="scalable/actions/owui-wallpaper-symbolic.svg">icons/wallpaper.svg</file>

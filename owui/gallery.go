@@ -6,28 +6,63 @@ import (
 	"github.com/diamondburned/gotk4/pkg/glib/v2"
 	"github.com/diamondburned/gotk4/pkg/gtk/v4"
 	"github.com/diamondburned/gotk4/pkg/pango"
+	"github.com/sahilm/fuzzy"
 )
 
 var previewLoadSlots = make(chan struct{}, 4)
 
-func buildLibraryPane(state *appState, detail detailWidgets) (*gtk.Box, func()) {
+type wallpaperTitles []wallpaper
+
+func (wallpapers wallpaperTitles) String(index int) string { return wallpapers[index].title }
+func (wallpapers wallpaperTitles) Len() int                { return len(wallpapers) }
+
+func buildLibraryPane(state *appState, detail detailWidgets, searchEntry *gtk.SearchEntry) (*gtk.Box, func()) {
 	pane := gtk.NewBox(gtk.OrientationVertical, 0)
 	pane.SetHExpand(true)
 	pane.SetVExpand(true)
 
+	wallpaperIndices := map[string]int{}
+	searchQuery := ""
+	searchRanks := map[string]int{}
 	model := gtk.NewStringList(nil)
-	selection := gtk.NewSingleSelection(model)
+	filter := gtk.NewCustomFilter(func(object *glib.Object) bool {
+		if searchQuery == "" {
+			return true
+		}
+		_, found := searchRanks[stringObjectValue(object)]
+		return found
+	})
+	filtered := gtk.NewFilterListModel(model, &filter.Filter)
+	sorter := gtk.NewCustomSorter(glib.NewObjectComparer(func(left, right *gtk.StringObject) int {
+		leftPath := left.String()
+		rightPath := right.String()
+		if searchQuery != "" {
+			return searchRanks[leftPath] - searchRanks[rightPath]
+		}
+		return wallpaperIndices[leftPath] - wallpaperIndices[rightPath]
+	}))
+	sorted := gtk.NewSortListModel(filtered, &sorter.Sorter)
+	selection := gtk.NewSingleSelection(sorted)
+	selection.SetAutoselect(false)
+	wallpaperIndex := func(object *glib.Object) int {
+		index, found := wallpaperIndices[stringObjectValue(object)]
+		if !found {
+			return -1
+		}
+		return index
+	}
 
 	factory := gtk.NewSignalListItemFactory()
 	previews := map[uintptr]*previewWidget{}
 	factory.ConnectBind(func(object *glib.Object) {
 		item := object.Cast().(*gtk.ListItem)
-		position := item.Position()
-		if position < uint(len(state.wallpapers)) {
-			tile, preview := buildWallpaperTile(state.wallpapers[position])
+		index := wallpaperIndex(item.Item())
+		if index >= 0 && index < len(state.wallpapers) {
+			wallpaper := state.wallpapers[index]
+			tile, preview := buildWallpaperTile(wallpaper)
 			previews[object.Native()] = preview
 			item.SetChild(tile)
-			setPreviewContent(preview, state.wallpapers[position].previewPath)
+			setPreviewContent(preview, wallpaper.previewPath)
 		}
 	})
 	factory.ConnectUnbind(func(object *glib.Object) {
@@ -44,59 +79,132 @@ func buildLibraryPane(state *appState, detail detailWidgets) (*gtk.Box, func()) 
 	grid.SetMarginBottom(9)
 	grid.SetMarginStart(9)
 	grid.SetMarginEnd(9)
+	grid.AddTickCallback(func(_ gtk.Widgetter, _ gdk.FrameClocker) bool {
+		grid.GrabFocus()
+		return false
+	})
+	state.focusGallery = func() {
+		grid.GrabFocus()
+	}
 
 	refreshing := false
-	populate := func(selectedPath string) {
+	selectedPath := func() string {
+		if state.selectedIndex >= 0 && state.selectedIndex < len(state.wallpapers) {
+			return state.wallpapers[state.selectedIndex].path
+		}
+		return ""
+	}
+	replaceModel := func() {
+		items := make([]string, len(state.wallpapers))
+		wallpaperIndices = make(map[string]int, len(state.wallpapers))
+		for index, wallpaper := range state.wallpapers {
+			items[index] = wallpaper.path
+			wallpaperIndices[wallpaper.path] = index
+		}
+		model.Splice(0, model.NItems(), items)
+	}
+	populate := func(query string, selectedPath string) {
 		refreshing = true
 		defer func() {
 			refreshing = false
 		}()
 
-		state.selectedIndex = -1
-		items := make([]string, len(state.wallpapers))
-		selectedIndex := 0
-		for index, wallpaper := range state.wallpapers {
-			items[index] = wallpaper.path
-			if selectedPath != "" && wallpaper.path == selectedPath {
-				selectedIndex = index
+		selectedIndex := -1
+		if index, found := wallpaperIndices[selectedPath]; found {
+			selectedIndex = index
+		}
+		searchQuery = query
+		searchRanks = map[string]int{}
+		if query != "" {
+			matches := fuzzy.FindFrom(query, wallpaperTitles(state.wallpapers))
+			for rank, match := range matches {
+				searchRanks[state.wallpapers[match.Index].path] = rank
 			}
 		}
-		model.Splice(0, model.NItems(), items)
+		filter.Changed(gtk.FilterChangeDifferent)
+		sorter.Changed(gtk.SorterChangeDifferent)
 
-		if len(state.wallpapers) > 0 {
+		selectedPosition := uint(gtk.INVALID_LIST_POSITION)
+		if query == "" {
+			for position := uint(0); position < sorted.NItems(); position++ {
+				if stringObjectValue(sorted.Item(position)) == selectedPath {
+					selectedPosition = uint(position)
+					break
+				}
+			}
+		}
+
+		if sorted.NItems() > 0 {
+			if selectedPosition == gtk.INVALID_LIST_POSITION {
+				selectedPosition = 0
+			}
+			state.selectedIndex = wallpaperIndex(sorted.Item(selectedPosition))
+			selection.SetSelected(selectedPosition)
+		} else {
 			state.selectedIndex = selectedIndex
-			selection.SetSelected(uint(selectedIndex))
+			selection.SetSelected(gtk.INVALID_LIST_POSITION)
 		}
 		updateDetail(detail, state)
 	}
-	populate("")
+	replaceModel()
+	populate("", "")
 	refreshWallpapers := func() {
-		selectedPath := ""
-		if state.selectedIndex >= 0 && state.selectedIndex < len(state.wallpapers) {
-			selectedPath = state.wallpapers[state.selectedIndex].path
-		}
+		path := selectedPath()
 		state.wallpapers = loadWallpapers(*state.settings)
-		populate(selectedPath)
+		replaceModel()
+		populate(searchEntry.Text(), path)
 	}
+	searchEntry.ConnectChanged(func() {
+		populate(searchEntry.Text(), selectedPath())
+	})
+	searchEntry.ConnectActivate(func() {
+		searchEntry.Emit("stop-search")
+		runSelectedWallpaper(detail, state)
+	})
+	searchEntry.ConnectStopSearch(func() {
+		glib.IdleAdd(func() {
+			position := selection.Selected()
+			if position < sorted.NItems() {
+				grid.ScrollTo(position, gtk.ListScrollFocus|gtk.ListScrollSelect, nil)
+			}
+			grid.GrabFocus()
+		})
+	})
+	searchEntry.SetKeyCaptureWidget(pane)
 
 	selection.NotifyProperty("selected", func() {
 		if refreshing {
 			return
 		}
-		position := selection.Selected()
-		if position >= uint(len(state.wallpapers)) {
+		index := wallpaperIndex(selection.SelectedItem())
+		if index < 0 || index >= len(state.wallpapers) {
 			return
 		}
-		state.selectedIndex = int(position)
+		state.selectedIndex = index
 		updateDetail(detail, state)
 	})
 	grid.ConnectActivate(func(position uint) {
-		if position >= uint(len(state.wallpapers)) {
+		index := wallpaperIndex(sorted.Item(position))
+		if index < 0 || index >= len(state.wallpapers) {
 			return
 		}
-		state.selectedIndex = int(position)
+		state.selectedIndex = index
 		runSelectedWallpaper(detail, state)
 	})
+
+	searchKeys := gtk.NewEventControllerKey()
+	searchKeys.ConnectKeyPressed(func(keyval uint, _ uint, _ gdk.ModifierType) bool {
+		if keyval != gdk.KEY_Down && keyval != gdk.KEY_Up {
+			return false
+		}
+		position := selection.Selected()
+		if position >= sorted.NItems() {
+			return true
+		}
+		grid.ScrollTo(position, gtk.ListScrollFocus|gtk.ListScrollSelect, nil)
+		return true
+	})
+	searchEntry.AddController(searchKeys)
 
 	scrolled := gtk.NewScrolledWindow()
 	scrolled.AddCSSClass("wallpaper-grid")
@@ -107,6 +215,13 @@ func buildLibraryPane(state *appState, detail detailWidgets) (*gtk.Box, func()) 
 	pane.Append(scrolled)
 
 	return pane, refreshWallpapers
+}
+
+func stringObjectValue(object *glib.Object) string {
+	if object == nil {
+		return ""
+	}
+	return object.Cast().(*gtk.StringObject).String()
 }
 
 func buildWallpaperTile(wallpaper wallpaper) (*gtk.Box, *previewWidget) {
@@ -162,6 +277,10 @@ func buildPreviewBox(width int, height int) *previewWidget {
 }
 
 func setPreviewContent(preview *previewWidget, previewPath string) {
+	if preview.path == previewPath {
+		return
+	}
+	preview.path = previewPath
 	cancelPreviewLoad(preview)
 	if preview.picture != nil {
 		preview.overlay.RemoveOverlay(preview.picture)

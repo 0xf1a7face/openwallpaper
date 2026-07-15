@@ -13,11 +13,36 @@ import (
 type galleryControls struct {
 	selectedPaneToggle *gtk.Button
 	displayButton      *gtk.MenuButton
+	searchButton       *gtk.Button
+	searchEntry        *gtk.SearchEntry
+	titleStack         *gtk.Stack
 }
 
 func (c galleryControls) setVisible(visible bool) {
+	if !visible {
+		c.stopSearch()
+	}
 	c.selectedPaneToggle.SetVisible(visible)
 	c.displayButton.SetVisible(visible)
+	c.searchButton.SetVisible(visible)
+}
+
+func (c galleryControls) toggleSearch() {
+	if c.titleStack.VisibleChildName() == "search" {
+		c.searchEntry.Emit("stop-search")
+		return
+	}
+	c.startSearch()
+}
+
+func (c galleryControls) startSearch() {
+	c.titleStack.SetVisibleChildName("search")
+	c.searchEntry.GrabFocus()
+}
+
+func (c galleryControls) stopSearch() {
+	c.searchEntry.SetText("")
+	c.titleStack.SetVisibleChildName("pages")
 }
 
 func buildTopBar(app *adw.Application, state *appState, pageStack *adw.ViewStack) (*adw.HeaderBar, galleryControls) {
@@ -28,7 +53,22 @@ func buildTopBar(app *adw.Application, state *appState, pageStack *adw.ViewStack
 	pageSwitcher := adw.NewViewSwitcher()
 	pageSwitcher.SetStack(pageStack)
 	pageSwitcher.SetPolicy(adw.ViewSwitcherPolicyWide)
-	header.SetTitleWidget(pageSwitcher)
+
+	searchEntry := gtk.NewSearchEntry()
+	searchEntry.SetPlaceholderText("Search wallpapers")
+	searchEntry.SetWidthChars(48)
+
+	titleStack := gtk.NewStack()
+	titleStack.SetHhomogeneous(false)
+	titleStack.SetVhomogeneous(true)
+	titleStack.SetTransitionType(gtk.StackTransitionTypeCrossfade)
+	titleStack.AddNamed(pageSwitcher, "pages")
+	titleStack.AddNamed(searchEntry, "search")
+	titleStack.SetVisibleChildName("pages")
+	header.SetTitleWidget(titleStack)
+
+	searchButton := adwaitaIconButton("search", "Search wallpapers")
+	header.PackStart(searchButton)
 
 	selectedPaneToggle := adwaitaIconButton("split-view", "Show or hide selected wallpaper")
 	header.PackStart(selectedPaneToggle)
@@ -46,10 +86,18 @@ func buildTopBar(app *adw.Application, state *appState, pageStack *adw.ViewStack
 	})
 	header.PackEnd(closeButton)
 
-	return header, galleryControls{
+	controls := galleryControls{
 		selectedPaneToggle: selectedPaneToggle,
 		displayButton:      displayButton,
+		searchButton:       searchButton,
+		searchEntry:        searchEntry,
+		titleStack:         titleStack,
 	}
+	searchButton.ConnectClicked(controls.toggleSearch)
+	searchEntry.ConnectSearchStarted(controls.startSearch)
+	searchEntry.ConnectStopSearch(controls.stopSearch)
+
+	return header, controls
 }
 
 type displayMapping struct {

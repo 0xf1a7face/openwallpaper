@@ -67,6 +67,16 @@ func buildUI(app *adw.Application) {
 
 	header, controls := buildTopBar(app, state, pageStack)
 	root.Append(header)
+	searchKeys := gtk.NewEventControllerKey()
+	searchKeys.SetPropagationPhase(gtk.PhaseCapture)
+	searchKeys.ConnectKeyPressed(func(keyval uint, _ uint, _ gdk.ModifierType) bool {
+		if keyval != gdk.KEY_Escape || controls.titleStack.VisibleChildName() != "search" {
+			return false
+		}
+		controls.searchEntry.Emit("stop-search")
+		return true
+	})
+	root.AddController(searchKeys)
 
 	selectedPane, detail := buildSelectedPane(state, displays)
 	selectedPaneVisible := true
@@ -75,7 +85,7 @@ func buildUI(app *adw.Application) {
 		selectedPane.SetVisible(selectedPaneVisible)
 	})
 
-	libraryPane, refreshWallpapers := buildLibraryPane(state, detail)
+	libraryPane, refreshWallpapers := buildLibraryPane(state, detail, controls.searchEntry)
 	state.refreshWallpapers = refreshWallpapers
 
 	mainPaned := gtk.NewPaned(gtk.OrientationHorizontal)

@@ -346,7 +346,7 @@ func importSelectedWallpaper(detail detailWidgets, state *appState) {
 		return
 	}
 
-	importWallpaperEngineScene(state.dialogParent, selectedWallpaper, importOptions, func(err error) {
+	importWallpaperEngineScene(state.dialogParent, state.focusGallery, selectedWallpaper, importOptions, func(err error) {
 		finishSelectedWallpaperImport(detail, state)
 	})
 }
@@ -364,7 +364,7 @@ func importSelectedWallpaperWithOptions(detail detailWidgets, state *appState) {
 			return
 		}
 		saveWallpaperEngineImportOptions(state, selectedWallpaper, *options)
-		importWallpaperEngineScene(state.dialogParent, selectedWallpaper, *options, func(err error) {
+		importWallpaperEngineScene(state.dialogParent, state.focusGallery, selectedWallpaper, *options, func(err error) {
 			finishSelectedWallpaperImport(detail, state)
 		})
 	})

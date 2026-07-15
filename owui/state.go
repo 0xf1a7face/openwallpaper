@@ -141,6 +141,7 @@ type previewWidget struct {
 	overlay    *gtk.Overlay
 	measure    *gtk.Box
 	picture    *gtk.Picture
+	path       string
 	loadCancel chan struct{}
 }
 
@@ -157,6 +158,7 @@ type appState struct {
 	updatingDetail         bool
 	working                atomic.Bool
 	refreshWallpapers      func()
+	focusGallery           func()
 }
 
 func (state *appState) notifyDisplayMappingsChanged() {

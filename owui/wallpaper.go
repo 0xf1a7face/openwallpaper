@@ -658,7 +658,7 @@ func wallpaperEngineEffectID(effect wallpaperEngineEffect) string {
 	return strconv.Itoa(effect.Index)
 }
 
-func importWallpaperEngineScene(parent gtk.Widgetter, wallpaper wallpaper, options wallpaperEngineImportOptions, done func(error)) {
+func importWallpaperEngineScene(parent gtk.Widgetter, focusGallery func(), wallpaper wallpaper, options wallpaperEngineImportOptions, done func(error)) {
 	output := &processOutput{}
 
 	tempDir, err := createTemporaryImportDir(wallpaper.importDir)
@@ -700,6 +700,9 @@ func importWallpaperEngineScene(parent gtk.Widgetter, wallpaper wallpaper, optio
 		if !finished.Load() {
 			aborted.Store(true)
 			terminateCommand(command)
+		}
+		if focusGallery != nil {
+			glib.IdleAdd(focusGallery)
 		}
 	})
 
