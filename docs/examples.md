@@ -8,7 +8,6 @@ To build examples yourself, you will need to install:
 
 - WASM C compiler, [wasi-sdk](https://github.com/WebAssembly/wasi-sdk/releases) recommended
 - glslc
-- zip
 
 Clone the repository:
 
@@ -17,23 +16,17 @@ git clone --depth=1 --recurse-submodules https://github.com/mechakotik/openwallp
 cd openwallpaper
 ```
 
-Set `WASM_CC` environment variable to your WASM C compiler path. If you have installed wasi-sdk to `/opt/wasi-sdk`, then the compiler is located in `/opt/wasi-sdk/bin/clang`.
+Build examples, specifying the path to WASM C compiler in `WASM_CC` environment variable:
 
 ```sh
-export WASM_CC=/opt/wasi-sdk/bin/clang
+WASM_CC=/opt/wasi-sdk/bin/clang ./examples/build.sh
 ```
 
-Then you can build examples with shell scripts:
+Each script writes `scene.wasm` and generated assets to a `scene` directory in the corresponding example directory. Run an example with:
 
 ```sh
-./examples/triangle/compile.sh
-./examples/fullscreen-shader/compile.sh
-./examples/image/compile.sh
-./examples/rain/compile.sh
-./examples/visualizer/compile.sh
+wallpaperd examples/triangle/scene/scene.wasm
 ```
-
-Resulting `.owf` files will be in corresponding example directories.
 
 ## triangle
 
@@ -42,8 +35,6 @@ Draws a triangle in the center of the screen, classic example of graphics API us
 <div style="text-align:left;">
     <img src="triangle.webp" width="600">
 </div>
-
-[Download owf](triangle.owf)
 
 [Source code](https://github.com/mechakotik/openwallpaper/tree/main/examples/triangle)
 
@@ -55,8 +46,6 @@ Demonstrates how to run shader wallpapers (e.g. from ShaderToy) in OpenWallpaper
     <img src="fullscreen-shader.webp" width="600">
 </div>
 
-[Download owf](fullscreen-shader.owf)
-
 [Source code](https://github.com/mechakotik/openwallpaper/tree/main/examples/fullscreen-shader)
 
 ## image
@@ -66,8 +55,6 @@ Draws a static image, simplest example of texture rendering. Original image is S
 <div style="text-align:left;">
     <img src="image.webp" width="600">
 </div>
-
-[Download owf](image.owf)
 
 [Source code](https://github.com/mechakotik/openwallpaper/tree/main/examples/image)
 
@@ -79,8 +66,6 @@ Draws particles to create a rain-like effect. An example of using instanced rend
     <img src="rain.webp" width="600">
 </div>
 
-[Download owf](rain.owf)
-
 [Source code](https://github.com/mechakotik/openwallpaper/tree/main/examples/rain)
 
 ## visualizer
@@ -90,8 +75,6 @@ Example of using `ow_get_audio_spectrum` to visualize audio. It gets spectrum da
 <div style="text-align:left;">
     <img src="visualizer.webp" width="600">
 </div>
-
-[Download owf](visualizer.owf)
 
 [Source code](https://github.com/mechakotik/openwallpaper/tree/main/examples/visualizer)
 
